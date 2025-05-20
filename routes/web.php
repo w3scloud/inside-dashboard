@@ -9,7 +9,6 @@ use App\Http\Controllers\ReportController;
 use App\Http\Controllers\SettingsController;
 use App\Http\Controllers\WebhookController;
 use Illuminate\Support\Facades\Route;
-use Inertia\Inertia;
 
 /*
 |--------------------------------------------------------------------------
@@ -23,12 +22,8 @@ use Inertia\Inertia;
 */
 
 // Public landing page
-Route::get('/', function () {
-    return Inertia::render('Welcome', [
-        'canLogin' => Route::has('login'),
-        'canRegister' => Route::has('register'),
-    ]);
-})->name('welcome');
+Route::get('/', [ShopifyController::class, 'initiateOAuth'])
+    ->name('shopify.auth');
 
 // Authentication routes (from Laravel Breeze)
 Route::middleware('guest')->group(function () {
