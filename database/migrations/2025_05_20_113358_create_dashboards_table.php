@@ -13,7 +13,15 @@ return new class extends Migration
     {
         Schema::create('dashboards', function (Blueprint $table) {
             $table->id();
+            $table->foreignId('store_id')->constrained()->cascadeOnDelete();
+            $table->string('name');
+            $table->text('description')->nullable();
+            $table->boolean('is_default')->default(false);
+            $table->json('layout')->nullable();
+            $table->json('settings')->nullable();
+            $table->timestamp('last_viewed_at')->nullable();
             $table->timestamps();
+            $table->softDeletes();
         });
     }
 
