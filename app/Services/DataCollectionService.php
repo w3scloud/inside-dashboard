@@ -11,141 +11,157 @@ class DataCollectionService
 {
     protected $shopifyService;
 
-    /**
-     * Create a new service instance.
-     */
     public function __construct(ShopifyService $shopifyService)
     {
         $this->shopifyService = $shopifyService;
     }
 
     /**
-     * Collect initial data for a store.
-     */
-    public function collectInitialData(Store $store): array
-    {
-        try {
-            Log::info('Collecting initial data for store', ['shop' => $store->shop_domain]);
-
-            // Collect shop details
-            $shopDetails = $this->shopifyService->getShopDetails($store);
-
-            if (! $shopDetails) {
-                Log::error('Failed to get shop details', ['shop' => $store->shop_domain]);
-
-                return ['success' => false, 'message' => 'Failed to get shop details'];
-            }
-
-            // Collect products
-            $products = $this->collectProducts($store);
-
-            // Collect customers
-            $customers = $this->collectCustomers($store);
-
-            // Collect orders
-            $orders = $this->collectOrders($store);
-
-            // Update store with shop details
-            $store->updateFromShopify($shopDetails['shop']);
-
-            return [
-                'success' => true,
-                'shop' => $shopDetails['shop'],
-                'product_count' => count($products),
-                'customer_count' => count($customers),
-                'order_count' => count($orders),
-            ];
-        } catch (\Exception $e) {
-            Log::error('Exception collecting initial data', [
-                'shop' => $store->shop_domain,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
-            ]);
-
-            return ['success' => false, 'message' => 'Error collecting data: '.$e->getMessage()];
-        }
-    }
-
-    /**
-     * Collect products for a store.
+     * Collect products with better error handling and caching.
      */
     public function collectProducts(Store $store): array
     {
         $cacheKey = "products_{$store->id}";
 
-        return Cache::remember($cacheKey, now()->addHours(1), function () use ($store) {
-            $allProducts = [];
-            $page = 1;
-            $hasMore = true;
+        return Cache::remember($cacheKey, now()->addHours(2), function () use ($store) {
+            try {
+                $allProducts = [];
+                $limit = 250;
+                $pageInfo = null;
+                $maxPages = 50;
+                $currentPage = 0;
 
-            while ($hasMore) {
-                $response = $this->shopifyService->getProducts($store, 250, $page);
+                Log::info('Starting product collection', ['store_id' => $store->id]);
 
-                if (! $response || ! isset($response['products'])) {
-                    break;
-                }
+                do {
+                    $params = [
+                        'limit' => $limit,
+                        'fields' => 'id,title,vendor,product_type,created_at,updated_at,status,variants,images,handle',
+                    ];
 
-                $products = $response['products'];
-                $allProducts = array_merge($allProducts, $products);
+                    if ($pageInfo) {
+                        $params['page_info'] = $pageInfo;
+                    }
 
-                // Check if there are more products
-                $hasMore = count($products) === 250;
-                $page++;
+                    $response = $this->shopifyService->makeApiCall($store, 'GET', '/admin/api/2023-07/products.json', $params);
 
-                // Avoid rate limits
-                if ($hasMore) {
-                    usleep(500000); // 0.5 seconds
-                }
+                    if (! $response || ! isset($response['products'])) {
+                        Log::warning('Invalid products response', ['store_id' => $store->id, 'page' => $currentPage]);
+                        break;
+                    }
+
+                    $products = $response['products'];
+                    $allProducts = array_merge($allProducts, $products);
+
+                    // Handle pagination
+                    $pageInfo = $this->extractPageInfo($response);
+                    $currentPage++;
+
+                    Log::info('Products page fetched', [
+                        'store_id' => $store->id,
+                        'page' => $currentPage,
+                        'products_in_page' => count($products),
+                        'total_so_far' => count($allProducts),
+                    ]);
+
+                    // Rate limiting
+                    usleep(500000);
+
+                } while (! empty($products) && count($products) === $limit && $currentPage < $maxPages && $pageInfo);
+
+                Log::info('Product collection completed', [
+                    'store_id' => $store->id,
+                    'total_products' => count($allProducts),
+                    'pages_fetched' => $currentPage,
+                ]);
+
+                return $allProducts;
+
+            } catch (\Exception $e) {
+                Log::error('Error collecting products', [
+                    'store_id' => $store->id,
+                    'error' => $e->getMessage(),
+                    'trace' => $e->getTraceAsString(),
+                ]);
+
+                return [];
             }
-
-            return $allProducts;
         });
     }
 
     /**
-     * Collect customers for a store.
+     * Collect customers with better error handling.
      */
     public function collectCustomers(Store $store): array
     {
         $cacheKey = "customers_{$store->id}";
 
-        return Cache::remember($cacheKey, now()->addHours(1), function () use ($store) {
-            $allCustomers = [];
-            $params = ['limit' => 250];
-            $hasMore = true;
+        return Cache::remember($cacheKey, now()->addHours(2), function () use ($store) {
+            try {
+                $allCustomers = [];
+                $limit = 250;
+                $pageInfo = null;
+                $maxPages = 50;
+                $currentPage = 0;
 
-            while ($hasMore) {
-                $response = $this->shopifyService->getCustomers($store, $params);
+                Log::info('Starting customer collection', ['store_id' => $store->id]);
 
-                if (! $response || ! isset($response['customers'])) {
-                    break;
-                }
+                do {
+                    $params = [
+                        'limit' => $limit,
+                        'fields' => 'id,email,first_name,last_name,orders_count,total_spent,created_at,updated_at,accepts_marketing,tags,default_address',
+                    ];
 
-                $customers = $response['customers'];
-                $allCustomers = array_merge($allCustomers, $customers);
+                    if ($pageInfo) {
+                        $params['page_info'] = $pageInfo;
+                    }
 
-                // Check if there are more customers
-                $hasMore = count($customers) === 250;
+                    $response = $this->shopifyService->makeApiCall($store, 'GET', '/admin/api/2023-07/customers.json', $params);
 
-                if ($hasMore && isset($response['next'])) {
-                    // Set params for next page
-                    $params = ['limit' => 250, 'page_info' => $response['next']];
-                } else {
-                    $hasMore = false;
-                }
+                    if (! $response || ! isset($response['customers'])) {
+                        Log::warning('Invalid customers response', ['store_id' => $store->id, 'page' => $currentPage]);
+                        break;
+                    }
 
-                // Avoid rate limits
-                if ($hasMore) {
-                    usleep(500000); // 0.5 seconds
-                }
+                    $customers = $response['customers'];
+                    $allCustomers = array_merge($allCustomers, $customers);
+
+                    $pageInfo = $this->extractPageInfo($response);
+                    $currentPage++;
+
+                    Log::info('Customers page fetched', [
+                        'store_id' => $store->id,
+                        'page' => $currentPage,
+                        'customers_in_page' => count($customers),
+                        'total_so_far' => count($allCustomers),
+                    ]);
+
+                    // Rate limiting
+                    usleep(500000);
+
+                } while (! empty($customers) && count($customers) === $limit && $currentPage < $maxPages && $pageInfo);
+
+                Log::info('Customer collection completed', [
+                    'store_id' => $store->id,
+                    'total_customers' => count($allCustomers),
+                    'pages_fetched' => $currentPage,
+                ]);
+
+                return $allCustomers;
+
+            } catch (\Exception $e) {
+                Log::error('Error collecting customers', [
+                    'store_id' => $store->id,
+                    'error' => $e->getMessage(),
+                ]);
+
+                return [];
             }
-
-            return $allCustomers;
         });
     }
 
     /**
-     * Collect orders for a store.
+     * Collect orders for a specific date range.
      */
     public function collectOrders(Store $store, ?Carbon $startDate = null, ?Carbon $endDate = null): array
     {
@@ -154,84 +170,205 @@ class DataCollectionService
 
         $cacheKey = "orders_{$store->id}_{$startDate->timestamp}_{$endDate->timestamp}";
 
-        return Cache::remember($cacheKey, now()->addHours(1), function () use ($store, $startDate, $endDate) {
-            $allOrders = [];
-            $params = [
-                'limit' => 250,
-                'status' => 'any',
-                'created_at_min' => $startDate->toIso8601String(),
-                'created_at_max' => $endDate->toIso8601String(),
-            ];
-            $hasMore = true;
+        return Cache::remember($cacheKey, now()->addMinutes(30), function () use ($store, $startDate, $endDate) {
+            try {
+                $allOrders = [];
+                $limit = 250;
+                $pageInfo = null;
+                $maxPages = 100;
+                $currentPage = 0;
 
-            while ($hasMore) {
-                $response = $this->shopifyService->getOrders($store, $params);
+                Log::info('Starting order collection', [
+                    'store_id' => $store->id,
+                    'date_range' => [$startDate->toDateString(), $endDate->toDateString()],
+                ]);
 
-                if (! $response || ! isset($response['orders'])) {
-                    break;
-                }
-
-                $orders = $response['orders'];
-                $allOrders = array_merge($allOrders, $orders);
-
-                // Check if there are more orders
-                $hasMore = count($orders) === 250;
-
-                if ($hasMore && isset($response['next'])) {
-                    // Set params for next page
+                do {
                     $params = [
-                        'limit' => 250,
+                        'limit' => $limit,
                         'status' => 'any',
-                        'page_info' => $response['next'],
+                        'created_at_min' => $startDate->toIso8601String(),
+                        'created_at_max' => $endDate->toIso8601String(),
+                        'fields' => 'id,created_at,updated_at,order_number,total_price,subtotal_price,total_tax,total_discounts,financial_status,fulfillment_status,cancelled_at,customer,line_items',
                     ];
-                } else {
-                    $hasMore = false;
-                }
 
-                // Avoid rate limits
-                if ($hasMore) {
-                    usleep(500000); // 0.5 seconds
-                }
+                    if ($pageInfo) {
+                        $params['page_info'] = $pageInfo;
+                    }
+
+                    $response = $this->shopifyService->makeApiCall($store, 'GET', '/admin/api/2023-07/orders.json', $params);
+
+                    if (! $response || ! isset($response['orders'])) {
+                        Log::warning('Invalid orders response', ['store_id' => $store->id, 'page' => $currentPage]);
+                        break;
+                    }
+
+                    $orders = $response['orders'];
+                    $allOrders = array_merge($allOrders, $orders);
+
+                    $pageInfo = $this->extractPageInfo($response);
+                    $currentPage++;
+
+                    Log::info('Orders page fetched', [
+                        'store_id' => $store->id,
+                        'page' => $currentPage,
+                        'orders_in_page' => count($orders),
+                        'total_so_far' => count($allOrders),
+                    ]);
+
+                    // Rate limiting
+                    usleep(500000);
+
+                } while (! empty($orders) && count($orders) === $limit && $currentPage < $maxPages && $pageInfo);
+
+                Log::info('Order collection completed', [
+                    'store_id' => $store->id,
+                    'total_orders' => count($allOrders),
+                    'pages_fetched' => $currentPage,
+                ]);
+
+                return $allOrders;
+
+            } catch (\Exception $e) {
+                Log::error('Error collecting orders', [
+                    'store_id' => $store->id,
+                    'error' => $e->getMessage(),
+                ]);
+
+                return [];
             }
-
-            return $allOrders;
         });
     }
 
     /**
-     * Collect inventory for a store.
+     * Collect inventory with better error handling.
      */
     public function collectInventory(Store $store): array
     {
         $cacheKey = "inventory_{$store->id}";
 
         return Cache::remember($cacheKey, now()->addHours(1), function () use ($store) {
-            // Get all locations
-            $locationsData = $this->shopifyService->makeApiCall($store, 'GET', '/admin/api/2023-07/locations.json');
-            $locations = $locationsData['locations'] ?? [];
+            try {
+                // First get all locations
+                $locationsResponse = $this->shopifyService->makeApiCall($store, 'GET', '/admin/api/2023-07/locations.json');
+                $locations = $locationsResponse['locations'] ?? [];
 
-            if (empty($locations)) {
-                return [];
-            }
+                if (empty($locations)) {
+                    Log::info('No locations found for store', ['store_id' => $store->id]);
 
-            $inventoryByLocation = [];
-
-            foreach ($locations as $location) {
-                $locationId = $location['id'];
-                $inventoryLevels = $this->shopifyService->getInventoryLevels($store, $locationId);
-
-                if ($inventoryLevels && isset($inventoryLevels['inventory_levels'])) {
-                    $inventoryByLocation[$locationId] = [
-                        'location' => $location,
-                        'inventory_levels' => $inventoryLevels['inventory_levels'],
-                    ];
+                    return [];
                 }
 
-                // Avoid rate limits
-                usleep(500000); // 0.5 seconds
-            }
+                Log::info('Found locations for inventory collection', [
+                    'store_id' => $store->id,
+                    'locations_count' => count($locations),
+                ]);
 
-            return $inventoryByLocation;
+                $inventoryByLocation = [];
+
+                foreach ($locations as $location) {
+                    $locationId = $location['id'];
+
+                    try {
+                        // Get inventory levels for this location
+                        $params = [
+                            'location_ids' => $locationId,
+                            'limit' => 250,
+                        ];
+
+                        $inventoryResponse = $this->shopifyService->makeApiCall(
+                            $store,
+                            'GET',
+                            '/admin/api/2023-07/inventory_levels.json',
+                            $params
+                        );
+
+                        if ($inventoryResponse && isset($inventoryResponse['inventory_levels'])) {
+                            $inventoryByLocation[$locationId] = [
+                                'location' => $location,
+                                'inventory_levels' => $inventoryResponse['inventory_levels'],
+                            ];
+
+                            Log::info('Inventory levels fetched for location', [
+                                'store_id' => $store->id,
+                                'location_id' => $locationId,
+                                'location_name' => $location['name'],
+                                'inventory_items' => count($inventoryResponse['inventory_levels']),
+                            ]);
+                        }
+
+                        // Rate limiting
+                        usleep(500000);
+
+                    } catch (\Exception $e) {
+                        Log::error('Error fetching inventory for location', [
+                            'store_id' => $store->id,
+                            'location_id' => $locationId,
+                            'error' => $e->getMessage(),
+                        ]);
+                    }
+                }
+
+                Log::info('Inventory collection completed', [
+                    'store_id' => $store->id,
+                    'locations_processed' => count($inventoryByLocation),
+                ]);
+
+                return $inventoryByLocation;
+
+            } catch (\Exception $e) {
+                Log::error('Error collecting inventory', [
+                    'store_id' => $store->id,
+                    'error' => $e->getMessage(),
+                ]);
+
+                return [];
+            }
         });
+    }
+
+    /**
+     * Extract page info from Shopify API response.
+     */
+    private function extractPageInfo(array $response): ?string
+    {
+        // Check for Link header pagination
+        if (isset($response['link'])) {
+            $linkHeader = $response['link'];
+            if (preg_match('/<([^>]+)>;\s*rel="next"/', $linkHeader, $matches)) {
+                $nextUrl = $matches[1];
+                if (preg_match('/page_info=([^&]+)/', $nextUrl, $pageMatches)) {
+                    return $pageMatches[1];
+                }
+            }
+        }
+
+        // Check for page_info in response
+        if (isset($response['page_info'])) {
+            return $response['page_info'];
+        }
+
+        return null;
+    }
+
+    /**
+     * Clear all cached data for a store.
+     */
+    public function clearCache(Store $store): void
+    {
+        $patterns = [
+            "products_{$store->id}",
+            "customers_{$store->id}",
+            "inventory_{$store->id}",
+            "orders_{$store->id}_*",
+            "product_performance_{$store->id}_*",
+            "customer_data_{$store->id}_*",
+        ];
+
+        foreach ($patterns as $pattern) {
+            Cache::forget($pattern);
+        }
+
+        Log::info('Cache cleared for store', ['store_id' => $store->id]);
     }
 }
