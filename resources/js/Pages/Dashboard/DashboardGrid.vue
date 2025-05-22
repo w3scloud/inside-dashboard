@@ -8,7 +8,7 @@ const props = defineProps({
     },
     cols: {
         type: Number,
-        default: 3,
+        default: 12,
     },
     rowHeight: {
         type: Number,
@@ -16,7 +16,7 @@ const props = defineProps({
     },
     margin: {
         type: Array,
-        default: () => [20, 20],
+        default: () => [10, 10],
     },
     isDraggable: {
         type: Boolean,
@@ -34,25 +34,26 @@ const gridContainer = ref(null);
 const containerWidth = ref(1200);
 
 const gridStyle = computed(() => ({
-    display: 'grid',
-    gridTemplateColumns: `repeat(${props.cols}, 1fr)`,
-    gap: `${props.margin[1]}px ${props.margin[0]}px`,
+    position: 'relative',
     width: '100%',
     minHeight: '400px',
 }));
 
 const getItemStyle = (item) => {
-    const minHeight = props.rowHeight * item.size.h;
-    const maxHeight = props.rowHeight * item.size.h + 50;
+    const colWidth = containerWidth.value / props.cols;
+    const x = item.position.x * colWidth;
+    const y = item.position.y * (props.rowHeight + props.margin[1]);
+    const width = item.size.w * colWidth - props.margin[0];
+    const height =
+        item.size.h * props.rowHeight + (item.size.h - 1) * props.margin[1];
 
     return {
-        gridColumn: `span ${Math.min(item.size.w, props.cols)}`,
-        gridRow: `span ${item.size.h}`,
-        minHeight: `${minHeight}px`,
-        maxHeight: `${maxHeight}px`,
-        height: `${minHeight}px`,
+        position: 'absolute',
+        left: `${x + props.margin[0] / 2}px`,
+        top: `${y + props.margin[1] / 2}px`,
+        width: `${width}px`,
+        height: `${height}px`,
         transition: 'all 0.2s ease',
-        overflow: 'hidden',
     };
 };
 
@@ -74,6 +75,7 @@ onMounted(() => {
 watch(
     () => props.layout,
     () => {
+        // Emit layout changes
         emit('layout-updated', props.layout);
     },
     { deep: true }
@@ -102,35 +104,10 @@ watch(
     border-radius: 8px;
     overflow: hidden;
     box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06);
-    transition: box-shadow 0.2s ease;
-    display: flex;
-    flex-direction: column;
-    min-height: 150px;
-    max-height: 500px;
 }
 
 .grid-item:hover {
     box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1),
         0 2px 4px -1px rgba(0, 0, 0, 0.06);
-}
-
-@media (max-width: 1024px) {
-    .dashboard-grid {
-        grid-template-columns: repeat(2, 1fr);
-    }
-
-    .grid-item {
-        max-height: 400px;
-    }
-}
-
-@media (max-width: 640px) {
-    .dashboard-grid {
-        grid-template-columns: 1fr;
-    }
-
-    .grid-item {
-        max-height: 350px;
-    }
 }
 </style>

@@ -3,6 +3,8 @@
 namespace App\Http\Middleware;
 
 use App\Models\Store;
+use App\Services\ShopifyService;
+use Carbon\Carbon;
 use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -111,7 +113,9 @@ class HandleShopifyAuth
         }
 
         // If the store was recently validated, consider the token valid
-        $lastValidated = $store->getSetting('token_last_validated', null);
+        $metadata = $store->metadata ?? [];
+        $lastValidated = $metadata['token_last_validated'] ?? null;
+
         if ($lastValidated && now()->diffInMinutes(Carbon::parse($lastValidated)) < 60) {
             return true;
         }
@@ -126,7 +130,8 @@ class HandleShopifyAuth
             }
 
             // Update token validation timestamp
-            $store->setSetting('token_last_validated', now()->toIso8601String());
+            $metadata['token_last_validated'] = now()->toIso8601String();
+            $store->update(['metadata' => $metadata]);
 
             return true;
         } catch (\Exception $e) {

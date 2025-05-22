@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, watch, computed } from 'vue';
+import { ref, onMounted, onBeforeUnmount, watch, computed } from 'vue';
 import Chart from 'chart.js/auto';
 
 const props = defineProps({
@@ -15,6 +15,7 @@ const props = defineProps({
 
 const chartRef = ref(null);
 const chart = ref(null);
+const chartContainer = ref(null);
 
 const chartType = computed(() => {
     if (props.widget.chart_type === 'bar') {
@@ -72,7 +73,12 @@ const createChart = () => {
         data: chartData.value,
         options: {
             responsive: true,
-            maintainAspectRatio: false,
+            maintainAspectRatio: false, // This is crucial!
+            plugins: {
+                legend: {
+                    position: 'top',
+                },
+            },
             scales: {
                 y: {
                     beginAtZero: true,
@@ -103,11 +109,18 @@ const createChart = () => {
     });
 };
 
+const destroyChart = () => {
+    if (chart.value) {
+        chart.value.destroy();
+        chart.value = null;
+    }
+};
+
 const updateChart = () => {
     if (!chart.value) return;
 
     chart.value.data = chartData.value;
-    chart.value.update();
+    chart.value.update('none'); // Use 'none' for immediate update without animation
 };
 
 watch(
@@ -123,12 +136,33 @@ watch(
 );
 
 onMounted(() => {
-    createChart();
+    // Small delay to ensure the container is properly sized
+    setTimeout(() => {
+        createChart();
+    }, 100);
+});
+
+onBeforeUnmount(() => {
+    destroyChart();
 });
 </script>
 
 <template>
-    <div class="h-full w-full">
+    <div ref="chartContainer" class="chart-container">
         <canvas ref="chartRef"></canvas>
     </div>
 </template>
+
+<style scoped>
+.chart-container {
+    width: 100%;
+    height: 100%;
+    position: relative;
+    min-height: 200px;
+    max-height: 400px; /* Prevent infinite growth */
+}
+
+.chart-container canvas {
+    max-height: 100% !important;
+}
+</style>

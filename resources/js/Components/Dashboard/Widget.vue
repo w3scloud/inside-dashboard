@@ -67,8 +67,8 @@ const handleRemove = () => {
 </script>
 
 <template>
-    <div class="h-full w-full overflow-hidden rounded-lg bg-white shadow">
-        <div class="flex items-center justify-between border-b px-4 py-3">
+    <div class="widget-container">
+        <div class="widget-header">
             <div v-if="isEditing" class="flex items-center space-x-2">
                 <input
                     v-model="widgetTitle"
@@ -88,7 +88,7 @@ const handleRemove = () => {
                     Cancel
                 </button>
             </div>
-            <h3 v-else class="text-sm font-medium">{{ widget.title }}</h3>
+            <h3 v-else class="widget-title">{{ widget.title }}</h3>
 
             <div class="relative">
                 <button
@@ -107,10 +107,7 @@ const handleRemove = () => {
                     </svg>
                 </button>
 
-                <div
-                    v-if="showMenu"
-                    class="absolute right-0 z-10 mt-2 w-40 divide-y divide-gray-100 rounded-md bg-white shadow-lg ring-1 ring-black ring-opacity-5"
-                >
+                <div v-if="showMenu" class="widget-menu">
                     <div class="py-1">
                         <button
                             class="block w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100"
@@ -129,11 +126,8 @@ const handleRemove = () => {
             </div>
         </div>
 
-        <div class="h-[calc(100%-48px)] p-4">
-            <div
-                v-if="loading"
-                class="flex h-full w-full items-center justify-center"
-            >
+        <div class="widget-content">
+            <div v-if="loading" class="widget-loading">
                 <svg
                     class="h-8 w-8 animate-spin text-indigo-500"
                     xmlns="http://www.w3.org/2000/svg"
@@ -163,7 +157,7 @@ const handleRemove = () => {
                 :data="data"
             />
 
-            <div v-else class="flex h-full items-center justify-center">
+            <div v-else class="widget-error">
                 <p class="text-sm text-gray-500">
                     Widget type not supported: {{ widget.type }}
                 </p>
@@ -171,3 +165,39 @@ const handleRemove = () => {
         </div>
     </div>
 </template>
+
+<style scoped>
+.widget-container {
+    @apply h-full w-full overflow-hidden rounded-lg bg-white shadow;
+    display: flex;
+    flex-direction: column;
+}
+
+.widget-header {
+    @apply flex items-center justify-between border-b px-4 py-3;
+    flex-shrink: 0;
+}
+
+.widget-title {
+    @apply text-sm font-medium;
+}
+
+.widget-menu {
+    @apply absolute right-0 z-10 mt-2 w-40 divide-y divide-gray-100 rounded-md bg-white shadow-lg ring-1 ring-black ring-opacity-5;
+}
+
+.widget-content {
+    @apply flex-1 p-4;
+    min-height: 0; /* Important: allows flex child to shrink */
+    height: 100%;
+    overflow: hidden;
+}
+
+.widget-loading {
+    @apply flex h-full w-full items-center justify-center;
+}
+
+.widget-error {
+    @apply flex h-full items-center justify-center;
+}
+</style>

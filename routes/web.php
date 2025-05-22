@@ -21,19 +21,25 @@ use Illuminate\Support\Facades\Route;
 |
 */
 
-// Public landing page
-Route::get('/', [ShopifyController::class, 'initiateOAuth'])
-    ->name('shopify.auth');
+// Public landing page - show Shopify login
+Route::get('/', [ShopifyController::class, 'showLogin'])
+    ->name('home');
 
-// Authentication routes (from Laravel Breeze)
+// Authentication routes
 Route::middleware('guest')->group(function () {
-    // Default Laravel Breeze routes
-    Route::get('login', [ProfileController::class, 'showLogin'])
+    // Shopify login page
+    Route::get('/login', [ShopifyController::class, 'showLogin'])
         ->name('login');
 
-    // Shopify-specific routes
-    Route::get('/auth/shopify', [ShopifyController::class, 'initiateOAuth'])
+    // Shopify OAuth routes
+    Route::get('/auth/shopify', [ShopifyController::class, 'showLogin'])
+        ->name('shopify.login');
+
+    // Handle shop domain submission and initiate OAuth
+    Route::post('/auth/shopify', [ShopifyController::class, 'initiateOAuth'])
         ->name('shopify.auth');
+
+    // OAuth callback from Shopify
     Route::get('/auth/callback', [ShopifyController::class, 'handleCallback'])
         ->name('shopify.callback');
 });
@@ -130,16 +136,9 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::delete('/profile', [ProfileController::class, 'destroy'])->name('profile.destroy');
 });
 
-// Auth routes already defined by Laravel Breeze, including:
-// - Login
-// - Register
-// - Password reset
-// - Email verification
-
 // Logout route
 Route::post('/logout', [ShopifyController::class, 'logout'])
     ->middleware('auth')
     ->name('logout');
 
-require __DIR__.'/auth.php';
 require __DIR__.'/auth.php';

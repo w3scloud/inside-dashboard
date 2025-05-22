@@ -193,13 +193,13 @@ onMounted(() => {
                     :layout="layout"
                     @layout-updated="updateLayout"
                 >
-                    <template v-for="widget in layout" :key="widget.id">
+                    <template #default="{ item }">
                         <Widget
-                            :widget="widget"
-                            :data="widgetData[widget.id]"
+                            :widget="item"
+                            :data="widgetData[item.id]"
                             :loading="loading"
-                            @update="updateWidget(widget.id, $event)"
-                            @remove="removeWidget(widget.id)"
+                            @update="updateWidget(item.id, $event)"
+                            @remove="removeWidget(item.id)"
                         />
                     </template>
                 </DashboardGrid>

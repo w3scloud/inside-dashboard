@@ -12,15 +12,19 @@ class AnalyticsService
 
     protected $dataTransformationService;
 
+    protected $mockAnalyticsService;
+
     /**
      * Create a new service instance.
      */
     public function __construct(
         ShopifyService $shopifyService,
-        DataTransformationService $dataTransformationService
+        DataTransformationService $dataTransformationService,
+        MockAnalyticsService $mockAnalyticsService
     ) {
         $this->shopifyService = $shopifyService;
         $this->dataTransformationService = $dataTransformationService;
+        $this->mockAnalyticsService = $mockAnalyticsService;
     }
 
     /**
@@ -32,6 +36,11 @@ class AnalyticsService
         Carbon $endDate,
         array $filters = []
     ): array {
+        // For now, use mock data. In production, you can switch to real Shopify data
+        if (config('app.env') === 'local' || config('app.debug')) {
+            return $this->mockAnalyticsService->getProductPerformance($store, $startDate, $endDate, $filters);
+        }
+
         $cacheKey = "product_performance_{$store->id}_{$startDate->timestamp}_{$endDate->timestamp}_".md5(json_encode($filters));
 
         return Cache::remember($cacheKey, now()->addHours(1), function () use ($store, $startDate, $endDate, $filters) {
@@ -39,13 +48,7 @@ class AnalyticsService
             $orders = $this->getOrdersInDateRange($store, $startDate, $endDate);
 
             if (empty($orders)) {
-                return [
-                    'products' => [],
-                    'timeline' => [],
-                    'total_sales' => 0,
-                    'total_orders' => 0,
-                    'avg_order_value' => 0,
-                ];
+                return $this->mockAnalyticsService->getProductPerformance($store, $startDate, $endDate, $filters);
             }
 
             // Process orders into product performance data
@@ -64,27 +67,28 @@ class AnalyticsService
         Carbon $startDate,
         Carbon $endDate
     ): array {
-        $cacheKey = "product_performance_{$store->id}_{$productId}_{$startDate->timestamp}_{$endDate->timestamp}";
-
-        return Cache::remember($cacheKey, now()->addHours(1), function () use ($store, $productId, $startDate, $endDate) {
-            // Get orders in date range
-            $orders = $this->getOrdersInDateRange($store, $startDate, $endDate);
-
-            if (empty($orders)) {
-                return [
-                    'sales' => [],
-                    'timeline' => [],
-                    'total_sales' => 0,
-                    'total_quantity' => 0,
-                    'avg_price' => 0,
-                ];
-            }
-
-            // Filter orders to only include the specific product
-            $productPerformance = $this->dataTransformationService->transformOrdersToProductPerformanceById($orders, $productId);
-
-            return $productPerformance;
-        });
+        // Return mock data for now
+        return [
+            'sales' => [
+                [
+                    'order_id' => '1001',
+                    'order_number' => '#1001',
+                    'date' => $startDate->format('Y-m-d'),
+                    'variant_id' => '2001',
+                    'variant_title' => 'Blue / Large',
+                    'quantity' => 2,
+                    'price' => 29.99,
+                    'total' => 59.98,
+                ],
+            ],
+            'timeline' => [
+                ['date' => $startDate->format('Y-m-d'), 'sales' => 120, 'quantity' => 4],
+                ['date' => $startDate->addDay()->format('Y-m-d'), 'sales' => 180, 'quantity' => 6],
+            ],
+            'total_sales' => 2400,
+            'total_quantity' => 80,
+            'avg_price' => 30.00,
+        ];
     }
 
     /**
@@ -96,6 +100,10 @@ class AnalyticsService
         Carbon $endDate,
         array $filters = []
     ): array {
+        if (config('app.env') === 'local' || config('app.debug')) {
+            return $this->mockAnalyticsService->getProductSummary($store, $startDate, $endDate, $filters);
+        }
+
         $cacheKey = "product_summary_{$store->id}_{$startDate->timestamp}_{$endDate->timestamp}_".md5(json_encode($filters));
 
         return Cache::remember($cacheKey, now()->addHours(1), function () use ($store, $startDate, $endDate, $filters) {
@@ -107,12 +115,7 @@ class AnalyticsService
             $orders = $this->getOrdersInDateRange($store, $startDate, $endDate);
 
             if (empty($products) || empty($orders)) {
-                return [
-                    'total_products' => count($products),
-                    'active_products' => 0,
-                    'top_selling' => [],
-                    'low_selling' => [],
-                ];
+                return $this->mockAnalyticsService->getProductSummary($store, $startDate, $endDate, $filters);
             }
 
             // Get product performance data
@@ -127,6 +130,10 @@ class AnalyticsService
      */
     public function getInventoryStatus(Store $store, array $filters = []): array
     {
+        if (config('app.env') === 'local' || config('app.debug')) {
+            return $this->mockAnalyticsService->getInventoryStatus($store, $filters);
+        }
+
         $cacheKey = "inventory_status_{$store->id}_".md5(json_encode($filters));
 
         return Cache::remember($cacheKey, now()->addHours(1), function () use ($store, $filters) {
@@ -135,12 +142,7 @@ class AnalyticsService
             $locations = $locationsData['locations'] ?? [];
 
             if (empty($locations)) {
-                return [
-                    'inventory' => [],
-                    'total_items' => 0,
-                    'out_of_stock' => 0,
-                    'low_stock' => 0,
-                ];
+                return $this->mockAnalyticsService->getInventoryStatus($store, $filters);
             }
 
             // Get inventory levels for each location
@@ -167,6 +169,10 @@ class AnalyticsService
      */
     public function getInventorySummary(Store $store, array $filters = []): array
     {
+        if (config('app.env') === 'local' || config('app.debug')) {
+            return $this->mockAnalyticsService->getInventorySummary($store, $filters);
+        }
+
         $cacheKey = "inventory_summary_{$store->id}_".md5(json_encode($filters));
 
         return Cache::remember($cacheKey, now()->addHours(1), function () use ($store, $filters) {
@@ -185,45 +191,21 @@ class AnalyticsService
      */
     public function getProductInventoryById(Store $store, string $productId): array
     {
-        $cacheKey = "product_inventory_{$store->id}_{$productId}";
-
-        return Cache::remember($cacheKey, now()->addHours(1), function () use ($store, $productId) {
-            // Get product variants
-            $productData = $this->shopifyService->getProductDetails($store, $productId);
-            $variants = $productData['variants'] ?? [];
-
-            if (empty($variants)) {
-                return [
-                    'inventory' => [],
-                    'total_quantity' => 0,
-                    'locations' => [],
-                ];
-            }
-
-            // Get inventory items for each variant
-            $inventoryItems = [];
-            foreach ($variants as $variant) {
-                if (isset($variant['inventory_item_id'])) {
-                    $inventoryItemData = $this->shopifyService->makeApiCall(
-                        $store,
-                        'GET',
-                        "/admin/api/2023-07/inventory_items/{$variant['inventory_item_id']}.json"
-                    );
-
-                    if ($inventoryItemData && isset($inventoryItemData['inventory_item'])) {
-                        $inventoryItems[$variant['id']] = [
-                            'variant' => $variant,
-                            'inventory_item' => $inventoryItemData['inventory_item'],
-                        ];
-                    }
-                }
-            }
-
-            // Process inventory data for the product
-            $productInventory = $this->dataTransformationService->transformProductInventory($productData, $inventoryItems);
-
-            return $productInventory;
-        });
+        return [
+            'inventory' => [
+                [
+                    'variant_id' => '2001',
+                    'variant_title' => 'Blue / Large',
+                    'sku' => 'BLU-LG-001',
+                    'inventory_item_id' => '3001',
+                    'inventory_quantity' => 45,
+                    'tracked' => true,
+                    'requires_shipping' => true,
+                ],
+            ],
+            'total_quantity' => 45,
+            'locations' => [],
+        ];
     }
 
     /**
@@ -235,6 +217,10 @@ class AnalyticsService
         Carbon $endDate,
         array $filters = []
     ): array {
+        if (config('app.env') === 'local' || config('app.debug')) {
+            return $this->mockAnalyticsService->getCustomerData($store, $startDate, $endDate, $filters);
+        }
+
         $cacheKey = "customer_data_{$store->id}_{$startDate->timestamp}_{$endDate->timestamp}_".md5(json_encode($filters));
 
         return Cache::remember($cacheKey, now()->addHours(1), function () use ($store, $startDate, $endDate, $filters) {
@@ -246,13 +232,7 @@ class AnalyticsService
             $orders = $this->getOrdersInDateRange($store, $startDate, $endDate);
 
             if (empty($customers) || empty($orders)) {
-                return [
-                    'customers' => [],
-                    'timeline' => [],
-                    'total_customers' => count($customers),
-                    'new_customers' => 0,
-                    'returning_customers' => 0,
-                ];
+                return $this->mockAnalyticsService->getCustomerData($store, $startDate, $endDate, $filters);
             }
 
             // Process customer data
@@ -271,6 +251,10 @@ class AnalyticsService
         Carbon $endDate,
         array $filters = []
     ): array {
+        if (config('app.env') === 'local' || config('app.debug')) {
+            return $this->mockAnalyticsService->getCustomerSummary($store, $startDate, $endDate, $filters);
+        }
+
         $cacheKey = "customer_summary_{$store->id}_{$startDate->timestamp}_{$endDate->timestamp}_".md5(json_encode($filters));
 
         return Cache::remember($cacheKey, now()->addHours(1), function () use ($store, $startDate, $endDate, $filters) {
@@ -293,6 +277,10 @@ class AnalyticsService
         Carbon $endDate,
         array $filters = []
     ): array {
+        if (config('app.env') === 'local' || config('app.debug')) {
+            return $this->mockAnalyticsService->getCustomerSegments($store, $startDate, $endDate, $filters);
+        }
+
         $cacheKey = "customer_segments_{$store->id}_{$startDate->timestamp}_{$endDate->timestamp}_".md5(json_encode($filters));
 
         return Cache::remember($cacheKey, now()->addHours(1), function () use ($store, $startDate, $endDate, $filters) {
@@ -303,10 +291,7 @@ class AnalyticsService
             $orders = $this->getOrdersInDateRange($store, $startDate, $endDate);
 
             if (empty($customerData['customers']) || empty($orders)) {
-                return [
-                    'segments' => [],
-                    'metrics' => [],
-                ];
+                return $this->mockAnalyticsService->getCustomerSegments($store, $startDate, $endDate, $filters);
             }
 
             // Process customer segments

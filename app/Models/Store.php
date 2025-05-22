@@ -132,6 +132,32 @@ class Store extends Model
     }
 
     /**
+     * Get a setting value from metadata.
+     */
+    public function getSetting(string $key, $default = null)
+    {
+        $metadata = $this->metadata ?? [];
+        $settings = $metadata['settings'] ?? [];
+
+        return $settings[$key] ?? $default;
+    }
+
+    /**
+     * Set a setting value in metadata.
+     */
+    public function setSetting(string $key, $value): self
+    {
+        $metadata = $this->metadata ?? [];
+        $settings = $metadata['settings'] ?? [];
+        $settings[$key] = $value;
+        $metadata['settings'] = $settings;
+
+        $this->update(['metadata' => $metadata]);
+
+        return $this;
+    }
+
+    /**
      * Scope a query to only include active stores.
      *
      * @param  \Illuminate\Database\Eloquent\Builder  $query

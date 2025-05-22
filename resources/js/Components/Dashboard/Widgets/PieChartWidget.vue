@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, watch, computed } from 'vue';
+import { ref, onMounted, onBeforeUnmount, watch, computed } from 'vue';
 import Chart from 'chart.js/auto';
 
 const props = defineProps({
@@ -63,7 +63,7 @@ const createChart = () => {
         data: chartData.value,
         options: {
             responsive: true,
-            maintainAspectRatio: false,
+            maintainAspectRatio: false, // This is crucial!
             plugins: {
                 legend: {
                     position: 'bottom',
@@ -87,11 +87,18 @@ const createChart = () => {
     });
 };
 
+const destroyChart = () => {
+    if (chart.value) {
+        chart.value.destroy();
+        chart.value = null;
+    }
+};
+
 const updateChart = () => {
     if (!chart.value) return;
 
     chart.value.data = chartData.value;
-    chart.value.update();
+    chart.value.update('none');
 };
 
 watch(
@@ -107,12 +114,32 @@ watch(
 );
 
 onMounted(() => {
-    createChart();
+    setTimeout(() => {
+        createChart();
+    }, 100);
+});
+
+onBeforeUnmount(() => {
+    destroyChart();
 });
 </script>
 
 <template>
-    <div class="h-full w-full">
+    <div class="chart-container">
         <canvas ref="chartRef"></canvas>
     </div>
 </template>
+
+<style scoped>
+.chart-container {
+    width: 100%;
+    height: 100%;
+    position: relative;
+    min-height: 200px;
+    max-height: 300px; /* Prevent infinite growth */
+}
+
+.chart-container canvas {
+    max-height: 100% !important;
+}
+</style>

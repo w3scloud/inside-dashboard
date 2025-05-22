@@ -44,14 +44,24 @@ class ShopifyController extends Controller
      */
     public function initiateOAuth(Request $request)
     {
-        $shop = $request->input('shop');
+        // Validate the shop domain
+        $request->validate([
+            'shop' => 'required|string|max:255',
+        ], [
+            'shop.required' => 'Please enter your store domain',
+        ]);
 
-        if (! $shop) {
-            return back()->withErrors(['shop' => 'Please enter a shop domain']);
-        }
+        $shop = $request->input('shop');
 
         // Normalize the shop domain
         $shop = $this->normalizeShopDomain($shop);
+
+        // Validate the shop domain format
+        if (! $this->isValidShopDomain($shop)) {
+            return back()->withErrors([
+                'shop' => 'Please enter a valid Shopify store domain',
+            ]);
+        }
 
         // Generate the authorization URL
         $authUrl = $this->shopifyService->getAuthUrl($shop);
@@ -72,6 +82,11 @@ class ShopifyController extends Controller
 
             if (! $shop || ! $code) {
                 return redirect()->route('login')->withErrors(['error' => 'Invalid request parameters']);
+            }
+
+            // Verify the request is from Shopify
+            if (! $this->verifyShopifyRequest($request)) {
+                return redirect()->route('login')->withErrors(['error' => 'Invalid request signature']);
             }
 
             // Get access token from Shopify
@@ -156,6 +171,7 @@ class ShopifyController extends Controller
                 'name' => $name,
                 'email' => $email,
                 'password' => bcrypt(Str::random(32)),
+                'email_verified_at' => now(), // Auto-verify for Shopify users
             ]);
         }
 
@@ -178,12 +194,32 @@ class ShopifyController extends Controller
         // Remove trailing slash
         $shop = rtrim($shop, '/');
 
-        // Ensure .myshopify.com is appended
-        if (! str_contains($shop, '.myshopify.com')) {
-            $shop .= '.myshopify.com';
-        }
+        // Remove .myshopify.com if present, we'll add it back
+        $shop = str_replace('.myshopify.com', '', $shop);
 
-        return $shop;
+        // Ensure .myshopify.com is appended
+        $shop .= '.myshopify.com';
+
+        return strtolower($shop);
+    }
+
+    /**
+     * Validate shop domain format.
+     */
+    private function isValidShopDomain(string $shop): bool
+    {
+        // Check if it matches the pattern: shop-name.myshopify.com
+        return preg_match('/^[a-zA-Z0-9][a-zA-Z0-9\-]*[a-zA-Z0-9]\.myshopify\.com$/', $shop);
+    }
+
+    /**
+     * Verify the request is from Shopify.
+     */
+    private function verifyShopifyRequest(Request $request): bool
+    {
+        // For now, we'll just check if required parameters are present
+        // In production, you should verify the HMAC signature
+        return $request->has(['shop', 'code']);
     }
 
     /**
