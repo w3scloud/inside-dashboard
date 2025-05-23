@@ -1,3 +1,4 @@
+// resources/js/Pages/Products/NoStore.vue
 <script setup>
 import { Head, Link } from '@inertiajs/vue3';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';

@@ -17,6 +17,123 @@ class DataCollectionService
     }
 
     /**
+     * Collect initial data when a store is first connected.
+     */
+    public function collectInitialData(Store $store): array
+    {
+        try {
+            Log::info('Starting initial data collection', ['store_id' => $store->id]);
+
+            $results = [
+                'success' => true,
+                'message' => 'Initial data collection completed',
+                'product_count' => 0,
+                'customer_count' => 0,
+                'order_count' => 0,
+                'errors' => [],
+            ];
+
+            // Collect products
+            try {
+                $products = $this->collectProducts($store);
+                $results['product_count'] = count($products);
+                Log::info('Products collected during initial setup', [
+                    'store_id' => $store->id,
+                    'count' => $results['product_count'],
+                ]);
+            } catch (\Exception $e) {
+                $results['errors'][] = 'Products: '.$e->getMessage();
+                Log::error('Error collecting products during initial setup', [
+                    'store_id' => $store->id,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+
+            // Collect customers
+            try {
+                $customers = $this->collectCustomers($store);
+                $results['customer_count'] = count($customers);
+                Log::info('Customers collected during initial setup', [
+                    'store_id' => $store->id,
+                    'count' => $results['customer_count'],
+                ]);
+            } catch (\Exception $e) {
+                $results['errors'][] = 'Customers: '.$e->getMessage();
+                Log::error('Error collecting customers during initial setup', [
+                    'store_id' => $store->id,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+
+            // Collect recent orders (last 30 days)
+            try {
+                $startDate = Carbon::now()->subDays(30);
+                $endDate = Carbon::now();
+                $orders = $this->collectOrders($store, $startDate, $endDate);
+                $results['order_count'] = count($orders);
+                Log::info('Orders collected during initial setup', [
+                    'store_id' => $store->id,
+                    'count' => $results['order_count'],
+                ]);
+            } catch (\Exception $e) {
+                $results['errors'][] = 'Orders: '.$e->getMessage();
+                Log::error('Error collecting orders during initial setup', [
+                    'store_id' => $store->id,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+
+            // Collect inventory (optional, as it can be resource intensive)
+            try {
+                $inventory = $this->collectInventory($store);
+                $inventoryCount = 0;
+                foreach ($inventory as $locationData) {
+                    $inventoryCount += count($locationData['inventory_levels'] ?? []);
+                }
+                Log::info('Inventory collected during initial setup', [
+                    'store_id' => $store->id,
+                    'inventory_items' => $inventoryCount,
+                ]);
+            } catch (\Exception $e) {
+                $results['errors'][] = 'Inventory: '.$e->getMessage();
+                Log::error('Error collecting inventory during initial setup', [
+                    'store_id' => $store->id,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+
+            // If we have significant errors, mark as failed
+            if (count($results['errors']) > 2) {
+                $results['success'] = false;
+                $results['message'] = 'Initial data collection completed with errors: '.implode(', ', $results['errors']);
+            }
+
+            Log::info('Initial data collection completed', [
+                'store_id' => $store->id,
+                'results' => $results,
+            ]);
+
+            return $results;
+
+        } catch (\Exception $e) {
+            Log::error('Critical error during initial data collection', [
+                'store_id' => $store->id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            return [
+                'success' => false,
+                'message' => 'Failed to collect initial data: '.$e->getMessage(),
+                'product_count' => 0,
+                'customer_count' => 0,
+                'order_count' => 0,
+                'errors' => [$e->getMessage()],
+            ];
+        }
+    }
+
+    /**
      * Collect products with better error handling and caching.
      */
     public function collectProducts(Store $store): array

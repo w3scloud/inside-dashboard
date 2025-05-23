@@ -42,7 +42,6 @@ class AnalyticsService
 
         return Cache::remember($cacheKey, now()->addMinutes(30), function () use ($store, $startDate, $endDate, $filters) {
             try {
-                // Get orders in date range from Shopify
                 $orders = $this->getOrdersInDateRange($store, $startDate, $endDate);
 
                 if (empty($orders)) {
@@ -51,7 +50,6 @@ class AnalyticsService
                     return $this->getEmptyProductPerformance();
                 }
 
-                // Transform orders into product performance data
                 $productPerformance = $this->dataTransformationService->transformOrdersToProductPerformance($orders, $filters);
 
                 Log::info('Product performance data generated', [
@@ -66,10 +64,8 @@ class AnalyticsService
                 Log::error('Error fetching product performance', [
                     'store_id' => $store->id,
                     'error' => $e->getMessage(),
-                    'trace' => $e->getTraceAsString(),
                 ]);
 
-                // Return mock data as fallback
                 return $this->mockAnalyticsService->getProductPerformance($store, $startDate, $endDate, $filters);
             }
         });
@@ -88,10 +84,7 @@ class AnalyticsService
 
         return Cache::remember($cacheKey, now()->addMinutes(30), function () use ($store, $startDate, $endDate, $filters) {
             try {
-                // Get all products from Shopify
                 $products = $this->dataCollectionService->collectProducts($store);
-
-                // Get orders in date range
                 $orders = $this->getOrdersInDateRange($store, $startDate, $endDate);
 
                 if (empty($products)) {
@@ -100,7 +93,6 @@ class AnalyticsService
                     return $this->getEmptyProductSummary();
                 }
 
-                // Transform data into product summary
                 $productSummary = $this->dataTransformationService->summarizeProductPerformance($products, $orders, $filters);
 
                 Log::info('Product summary data generated', [
@@ -135,10 +127,7 @@ class AnalyticsService
 
         return Cache::remember($cacheKey, now()->addMinutes(30), function () use ($store, $startDate, $endDate, $filters) {
             try {
-                // Get customers from Shopify
                 $customers = $this->dataCollectionService->collectCustomers($store);
-
-                // Get orders in date range
                 $orders = $this->getOrdersInDateRange($store, $startDate, $endDate);
 
                 if (empty($customers)) {
@@ -147,7 +136,6 @@ class AnalyticsService
                     return $this->getEmptyCustomerData();
                 }
 
-                // Transform customer data
                 $customerData = $this->dataTransformationService->transformCustomerData($customers, $orders, $startDate, $endDate, $filters);
 
                 Log::info('Customer data generated', [
@@ -170,6 +158,67 @@ class AnalyticsService
     }
 
     /**
+     * Get customer summary data.
+     */
+    public function getCustomerSummary(
+        Store $store,
+        Carbon $startDate,
+        Carbon $endDate,
+        array $filters = []
+    ): array {
+        $cacheKey = "customer_summary_{$store->id}_{$startDate->timestamp}_{$endDate->timestamp}_".md5(json_encode($filters));
+
+        return Cache::remember($cacheKey, now()->addMinutes(30), function () use ($store, $startDate, $endDate, $filters) {
+            try {
+                $customerData = $this->getCustomerData($store, $startDate, $endDate, $filters);
+
+                return $this->dataTransformationService->summarizeCustomerData($customerData);
+
+            } catch (\Exception $e) {
+                Log::error('Error fetching customer summary', [
+                    'store_id' => $store->id,
+                    'error' => $e->getMessage(),
+                ]);
+
+                return $this->mockAnalyticsService->getCustomerSummary($store, $startDate, $endDate, $filters);
+            }
+        });
+    }
+
+    /**
+     * Get customer segments data.
+     */
+    public function getCustomerSegments(
+        Store $store,
+        Carbon $startDate,
+        Carbon $endDate,
+        array $filters = []
+    ): array {
+        $cacheKey = "customer_segments_{$store->id}_{$startDate->timestamp}_{$endDate->timestamp}_".md5(json_encode($filters));
+
+        return Cache::remember($cacheKey, now()->addMinutes(30), function () use ($store, $startDate, $endDate, $filters) {
+            try {
+                $customers = $this->dataCollectionService->collectCustomers($store);
+                $orders = $this->getOrdersInDateRange($store, $startDate, $endDate);
+
+                if (empty($customers)) {
+                    return ['segments' => []];
+                }
+
+                return $this->dataTransformationService->generateCustomerSegments($customers, $orders);
+
+            } catch (\Exception $e) {
+                Log::error('Error fetching customer segments', [
+                    'store_id' => $store->id,
+                    'error' => $e->getMessage(),
+                ]);
+
+                return $this->mockAnalyticsService->getCustomerSegments($store, $startDate, $endDate, $filters);
+            }
+        });
+    }
+
+    /**
      * Get inventory status from real Shopify store.
      */
     public function getInventoryStatus(Store $store, array $filters = []): array
@@ -178,7 +227,6 @@ class AnalyticsService
 
         return Cache::remember($cacheKey, now()->addMinutes(15), function () use ($store, $filters) {
             try {
-                // Get inventory data from Shopify
                 $inventoryData = $this->dataCollectionService->collectInventory($store);
 
                 if (empty($inventoryData)) {
@@ -187,7 +235,6 @@ class AnalyticsService
                     return $this->getEmptyInventoryStatus();
                 }
 
-                // Transform inventory data
                 $inventoryStatus = $this->dataTransformationService->transformInventoryData($inventoryData, $filters);
 
                 Log::info('Inventory status generated', [
@@ -209,81 +256,252 @@ class AnalyticsService
     }
 
     /**
+     * Get inventory summary data.
+     */
+    public function getInventorySummary(Store $store, array $filters = []): array
+    {
+        $cacheKey = "inventory_summary_{$store->id}_".md5(json_encode($filters));
+
+        return Cache::remember($cacheKey, now()->addMinutes(15), function () use ($store, $filters) {
+            try {
+                $inventoryStatus = $this->getInventoryStatus($store, $filters);
+
+                return $this->dataTransformationService->summarizeInventoryData($inventoryStatus);
+
+            } catch (\Exception $e) {
+                Log::error('Error fetching inventory summary', [
+                    'store_id' => $store->id,
+                    'error' => $e->getMessage(),
+                ]);
+
+                return $this->mockAnalyticsService->getInventorySummary($store, $filters);
+            }
+        });
+    }
+
+    /**
+     * Get product details by ID.
+     */
+    public function getProductDetails(Store $store, string $productId): ?array
+    {
+        $cacheKey = "product_details_{$store->id}_{$productId}";
+
+        return Cache::remember($cacheKey, now()->addHours(1), function () use ($store, $productId) {
+            try {
+                return $this->shopifyService->getProductDetails($store, $productId);
+            } catch (\Exception $e) {
+                Log::error('Error fetching product details', [
+                    'store_id' => $store->id,
+                    'product_id' => $productId,
+                    'error' => $e->getMessage(),
+                ]);
+
+                return null;
+            }
+        });
+    }
+
+    /**
+     * Get product performance by ID.
+     */
+    public function getProductPerformanceById(
+        Store $store,
+        string $productId,
+        Carbon $startDate,
+        Carbon $endDate
+    ): array {
+        $cacheKey = "product_performance_by_id_{$store->id}_{$productId}_{$startDate->timestamp}_{$endDate->timestamp}";
+
+        return Cache::remember($cacheKey, now()->addMinutes(30), function () use ($store, $productId, $startDate, $endDate) {
+            try {
+                $orders = $this->getOrdersInDateRange($store, $startDate, $endDate);
+
+                return $this->dataTransformationService->transformOrdersToProductPerformanceById($orders, $productId);
+
+            } catch (\Exception $e) {
+                Log::error('Error fetching product performance by ID', [
+                    'store_id' => $store->id,
+                    'product_id' => $productId,
+                    'error' => $e->getMessage(),
+                ]);
+
+                return [
+                    'sales' => [],
+                    'timeline' => [],
+                    'total_sales' => 0,
+                    'total_quantity' => 0,
+                    'avg_price' => 0,
+                ];
+            }
+        });
+    }
+
+    /**
+     * Get product inventory by ID.
+     */
+    public function getProductInventoryById(Store $store, string $productId): array
+    {
+        $cacheKey = "product_inventory_{$store->id}_{$productId}";
+
+        return Cache::remember($cacheKey, now()->addMinutes(30), function () use ($store, $productId) {
+            try {
+                // Get product details to get variants
+                $product = $this->getProductDetails($store, $productId);
+
+                if (! $product || ! isset($product['variants'])) {
+                    return [
+                        'inventory' => [],
+                        'total_quantity' => 0,
+                        'locations' => [],
+                    ];
+                }
+
+                $inventoryItems = [];
+                foreach ($product['variants'] as $variant) {
+                    $inventoryItems[$variant['id']] = [
+                        'variant' => $variant,
+                        'inventory_item' => [
+                            'tracked' => $variant['inventory_management'] === 'shopify',
+                            'requires_shipping' => $variant['requires_shipping'] ?? true,
+                        ],
+                    ];
+                }
+
+                return $this->dataTransformationService->transformProductInventory($product, $inventoryItems);
+
+            } catch (\Exception $e) {
+                Log::error('Error fetching product inventory by ID', [
+                    'store_id' => $store->id,
+                    'product_id' => $productId,
+                    'error' => $e->getMessage(),
+                ]);
+
+                return [
+                    'inventory' => [],
+                    'total_quantity' => 0,
+                    'locations' => [],
+                ];
+            }
+        });
+    }
+
+    /**
+     * Get customer details by ID.
+     */
+    public function getCustomerDetails(Store $store, string $customerId): ?array
+    {
+        $cacheKey = "customer_details_{$store->id}_{$customerId}";
+
+        return Cache::remember($cacheKey, now()->addHours(1), function () use ($store, $customerId) {
+            try {
+                $customer = $this->shopifyService->getCustomerDetails($store, $customerId);
+
+                if ($customer) {
+                    return $this->dataTransformationService->enhanceCustomerData($customer);
+                }
+
+                return null;
+
+            } catch (\Exception $e) {
+                Log::error('Error fetching customer details', [
+                    'store_id' => $store->id,
+                    'customer_id' => $customerId,
+                    'error' => $e->getMessage(),
+                ]);
+
+                return null;
+            }
+        });
+    }
+
+    /**
+     * Get customer order history.
+     */
+    public function getCustomerOrderHistory(
+        Store $store,
+        string $customerId,
+        Carbon $startDate,
+        Carbon $endDate
+    ): array {
+        $cacheKey = "customer_orders_{$store->id}_{$customerId}_{$startDate->timestamp}_{$endDate->timestamp}";
+
+        return Cache::remember($cacheKey, now()->addMinutes(30), function () use ($store, $customerId, $startDate, $endDate) {
+            try {
+                $params = [
+                    'created_at_min' => $startDate->toIso8601String(),
+                    'created_at_max' => $endDate->toIso8601String(),
+                    'limit' => 250,
+                    'status' => 'any',
+                ];
+
+                $response = $this->shopifyService->makeApiCall(
+                    $store,
+                    'GET',
+                    "/admin/api/2023-07/customers/{$customerId}/orders.json",
+                    $params
+                );
+
+                $orders = $response['orders'] ?? [];
+
+                return $this->dataTransformationService->transformCustomerOrderHistory($orders);
+
+            } catch (\Exception $e) {
+                Log::error('Error fetching customer order history', [
+                    'store_id' => $store->id,
+                    'customer_id' => $customerId,
+                    'error' => $e->getMessage(),
+                ]);
+
+                return [];
+            }
+        });
+    }
+
+    /**
+     * Get customer purchase metrics.
+     */
+    public function getCustomerPurchaseMetrics(
+        Store $store,
+        string $customerId,
+        Carbon $startDate,
+        Carbon $endDate
+    ): array {
+        try {
+            $orderHistory = $this->getCustomerOrderHistory($store, $customerId, $startDate, $endDate);
+
+            return $this->dataTransformationService->calculateCustomerPurchaseMetrics($orderHistory);
+
+        } catch (\Exception $e) {
+            Log::error('Error calculating customer purchase metrics', [
+                'store_id' => $store->id,
+                'customer_id' => $customerId,
+                'error' => $e->getMessage(),
+            ]);
+
+            return [
+                'total_orders' => 0,
+                'total_spent' => 0,
+                'avg_order_value' => 0,
+                'first_order' => null,
+                'last_order' => null,
+                'purchase_frequency_days' => 0,
+                'top_products' => [],
+            ];
+        }
+    }
+
+    /**
      * Get orders in date range with proper error handling and pagination.
      */
     private function getOrdersInDateRange(Store $store, Carbon $startDate, Carbon $endDate): array
     {
         try {
-            $allOrders = [];
-            $limit = 250;
-            $pageInfo = null;
-            $maxPages = 20; // Prevent infinite loops
-            $currentPage = 0;
-
-            do {
-                $params = [
-                    'created_at_min' => $startDate->toIso8601String(),
-                    'created_at_max' => $endDate->toIso8601String(),
-                    'limit' => $limit,
-                    'status' => 'any',
-                    'fields' => 'id,created_at,updated_at,order_number,total_price,subtotal_price,total_tax,financial_status,fulfillment_status,cancelled_at,customer,line_items',
-                ];
-
-                if ($pageInfo) {
-                    $params['page_info'] = $pageInfo;
-                }
-
-                Log::info('Fetching orders page', [
-                    'store_id' => $store->id,
-                    'page' => $currentPage + 1,
-                    'params' => $params,
-                ]);
-
-                $response = $this->shopifyService->makeApiCall($store, 'GET', '/admin/api/2023-07/orders.json', $params);
-
-                if (! $response || ! isset($response['orders'])) {
-                    Log::warning('Invalid orders response from Shopify API', [
-                        'store_id' => $store->id,
-                        'response' => $response,
-                    ]);
-                    break;
-                }
-
-                $orders = $response['orders'];
-                $allOrders = array_merge($allOrders, $orders);
-
-                // Check for pagination
-                $pageInfo = null;
-                if (isset($response['next'])) {
-                    $pageInfo = $response['next'];
-                } elseif (count($orders) === $limit) {
-                    // Use the last order's ID for pagination if no page_info
-                    $lastOrder = end($orders);
-                    if ($lastOrder && isset($lastOrder['id'])) {
-                        $params['since_id'] = $lastOrder['id'];
-                    }
-                }
-
-                $currentPage++;
-
-                // Rate limiting - Shopify allows 2 calls per second
-                usleep(500000); // 0.5 seconds
-
-            } while (! empty($orders) && count($orders) === $limit && $currentPage < $maxPages && $pageInfo);
-
-            Log::info('Orders fetched successfully', [
-                'store_id' => $store->id,
-                'total_orders' => count($allOrders),
-                'pages_fetched' => $currentPage,
-            ]);
-
-            return $allOrders;
-
+            return $this->dataCollectionService->collectOrders($store, $startDate, $endDate);
         } catch (\Exception $e) {
-            Log::error('Error fetching orders from Shopify', [
+            Log::error('Error fetching orders in date range', [
                 'store_id' => $store->id,
+                'date_range' => [$startDate->toDateString(), $endDate->toDateString()],
                 'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
             ]);
 
             return [];
@@ -334,7 +552,4 @@ class AnalyticsService
             'low_stock' => 0,
         ];
     }
-
-    // ... rest of the methods (getCustomerSummary, getInventorySummary, etc.)
-    // implement them following the same pattern as above
 }
