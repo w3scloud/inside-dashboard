@@ -73,6 +73,7 @@ class ShopifyGraphQLService
         $after = $options['after'] ?? null;
         $query = $options['query'] ?? null;
 
+        // REMOVED PROTECTED FIELDS: email, shippingAddress fields
         $graphqlQuery = '
             query getOrders($first: Int!, $after: String, $query: String) {
                 orders(first: $first, after: $after, query: $query) {
@@ -81,7 +82,6 @@ class ShopifyGraphQLService
                         node {
                             id
                             name
-                            email
                             createdAt
                             processedAt
                             updatedAt
@@ -130,16 +130,6 @@ class ShopifyGraphQLService
                                     }
                                 }
                             }
-                            shippingAddress {
-                                firstName
-                                lastName
-                                address1
-                                address2
-                                city
-                                province
-                                country
-                                zip
-                            }
                         }
                     }
                     pageInfo {
@@ -166,7 +156,7 @@ class ShopifyGraphQLService
 
         $response = $this->query($store, $graphqlQuery, $variables);
 
-        if (! $response || ! isset($response['data']['orders'])) {
+        if (! $response || isset($response['errors'])) {
             return [
                 'orders' => [],
                 'pageInfo' => null,
@@ -411,7 +401,7 @@ class ShopifyGraphQLService
             $order = [
                 'id' => $this->extractId($node['id']),
                 'name' => $node['name'],
-                'email' => $node['email'] ?? null,
+                // 'email' => $node['email'] ?? null,  // REMOVED - protected field
                 'created_at' => $node['createdAt'],
                 'processed_at' => $node['processedAt'] ?? null,
                 'updated_at' => $node['updatedAt'] ?? null,
@@ -424,7 +414,7 @@ class ShopifyGraphQLService
                 'tags' => $node['tags'],
                 'note' => $node['note'],
                 'line_items' => $this->transformLineItems($node['lineItems']['edges']),
-                'shipping_address' => $this->transformAddress($node['shippingAddress'] ?? null),
+                // 'shipping_address' => null, // REMOVED - protected fields
                 'cursor' => $edge['cursor'],
             ];
 

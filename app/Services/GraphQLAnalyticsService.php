@@ -52,30 +52,68 @@ class GraphQLAnalyticsService
      */
     public function getSalesAnalytics(Store $store, ?Carbon $startDate = null, ?Carbon $endDate = null): array
     {
-        $cacheKey = "sales_analytics_{$store->id}_".($startDate ? $startDate->format('Y-m-d') : 'default').'_'.($endDate ? $endDate->format('Y-m-d') : 'default');
+        $startDate = $startDate ?? now()->subDays(30);
+        $endDate = $endDate ?? now();
 
-        return Cache::remember($cacheKey, now()->addMinutes(30), function () use ($store, $startDate, $endDate) {
-            $startDate = $startDate ?? now()->subDays(30);
-            $endDate = $endDate ?? now();
+        // DISABLE CACHE FOR DEBUGGING
+        // $cacheKey = "sales_analytics_{$store->id}_".($startDate ? $startDate->format('Y-m-d') : 'default').'_'.($endDate ? $endDate->format('Y-m-d') : 'default');
 
-            try {
-                $ordersResult = $this->graphqlService->getOrdersByDateRange($store, $startDate, $endDate);
+        // return Cache::remember($cacheKey, now()->addMinutes(30), function () use ($store, $startDate, $endDate) {
 
-                if (isset($ordersResult['error']) || empty($ordersResult['orders'])) {
-                    return $this->generateEmptySalesAnalytics($startDate, $endDate);
-                }
+        Log::info('=== getSalesAnalytics START ===', [
+            'store_id' => $store->id,
+            'store_domain' => $store->shop_domain,
+            'start_date' => $startDate->toDateString(),
+            'end_date' => $endDate->toDateString(),
+        ]);
 
-                return $this->analyzeSalesData($ordersResult['orders'], $startDate, $endDate);
+        try {
+            Log::info('Calling graphqlService->getOrdersByDateRange');
 
-            } catch (\Exception $e) {
-                Log::error('Error getting sales analytics', [
-                    'store_id' => $store->id,
-                    'error' => $e->getMessage(),
+            $ordersResult = $this->graphqlService->getOrdersByDateRange($store, $startDate, $endDate);
+
+            Log::info('getOrdersByDateRange result', [
+                'result_type' => gettype($ordersResult),
+                'is_array' => is_array($ordersResult),
+                'has_error' => isset($ordersResult['error']),
+                'has_orders' => isset($ordersResult['orders']),
+                'orders_count' => isset($ordersResult['orders']) ? count($ordersResult['orders']) : 'N/A',
+                'full_result' => $ordersResult,
+            ]);
+
+            if (isset($ordersResult['error'])) {
+                Log::warning('Orders result has error', ['error' => $ordersResult['error']]);
+
+                return $this->generateEmptySalesAnalytics($startDate, $endDate);
+            }
+
+            if (empty($ordersResult['orders'])) {
+                Log::warning('Orders result is empty', [
+                    'ordersResult' => $ordersResult,
+                    'empty_check' => empty($ordersResult['orders']),
+                    'isset_check' => isset($ordersResult['orders']),
                 ]);
 
                 return $this->generateEmptySalesAnalytics($startDate, $endDate);
             }
-        });
+
+            Log::info('Found orders, analyzing sales data', [
+                'orders_count' => count($ordersResult['orders']),
+                'sample_order' => $ordersResult['orders'][0] ?? 'No orders',
+            ]);
+
+            return $this->analyzeSalesData($ordersResult['orders'], $startDate, $endDate);
+
+        } catch (\Exception $e) {
+            Log::error('Exception in getSalesAnalytics', [
+                'store_id' => $store->id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            return $this->generateEmptySalesAnalytics($startDate, $endDate);
+        }
+        // }); // Commented out cache for debugging
     }
 
     /**
