@@ -601,4 +601,154 @@ class AnalyticsController extends Controller
             ], 500);
         }
     }
+
+    public function debugGraphQLDateQuery(Request $request): JsonResponse
+    {
+        try {
+            $store = $this->getStore($request);
+            $startDate = $request->input('start_date', '2025-07-15');
+            $endDate = $request->input('end_date', '2025-07-15');
+
+            $startCarbon = Carbon::parse($startDate);
+            $endCarbon = Carbon::parse($endDate);
+
+            // Test different date query formats
+            $dateFormats = [
+                'format1' => sprintf(
+                    'created_at:>=%s AND created_at:<=%s',
+                    $startCarbon->toISOString(),
+                    $endCarbon->endOfDay()->toISOString()
+                ),
+                'format2' => sprintf(
+                    'created_at:>=%s AND created_at:<=%s',
+                    $startCarbon->format('Y-m-d'),
+                    $endCarbon->format('Y-m-d')
+                ),
+                'format3' => sprintf(
+                    'created_at:>=%sT00:00:00Z AND created_at:<=%sT23:59:59Z',
+                    $startDate,
+                    $endDate
+                ),
+                'format4' => sprintf(
+                    'created_at:>=%s AND created_at:<=%s',
+                    $startCarbon->startOfDay()->toISOString(),
+                    $endCarbon->endOfDay()->toISOString()
+                ),
+            ];
+
+            $results = [];
+            $graphqlService = $this->shopifyService->graphql();
+
+            foreach ($dateFormats as $formatName => $dateQuery) {
+                $query = '
+                query getOrdersInRange($first: Int!, $query: String!) {
+                    orders(first: $first, query: $query) {
+                        edges {
+                            node {
+                                id
+                                name
+                                createdAt
+                                totalPriceSet {
+                                    shopMoney {
+                                        amount
+                                        currencyCode
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            ';
+
+                $response = $graphqlService->query($store, $query, [
+                    'first' => 50,
+                    'query' => $dateQuery,
+                ]);
+
+                $orderCount = 0;
+                $orders = [];
+
+                if ($response && isset($response['data']['orders']['edges'])) {
+                    $orderCount = count($response['data']['orders']['edges']);
+                    $orders = array_map(function ($edge) {
+                        return [
+                            'id' => str_replace('gid://shopify/Order/', '', $edge['node']['id']),
+                            'name' => $edge['node']['name'],
+                            'created_at' => $edge['node']['createdAt'],
+                            'amount' => $edge['node']['totalPriceSet']['shopMoney']['amount'],
+                        ];
+                    }, $response['data']['orders']['edges']);
+                }
+
+                $results[$formatName] = [
+                    'date_query' => $dateQuery,
+                    'order_count' => $orderCount,
+                    'orders' => $orders,
+                    'response_errors' => $response['errors'] ?? null,
+                ];
+            }
+
+            // Also test without any date filter
+            $queryAll = '
+            query getAllOrders($first: Int!) {
+                orders(first: $first) {
+                    edges {
+                        node {
+                            id
+                            name
+                            createdAt
+                            totalPriceSet {
+                                shopMoney {
+                                    amount
+                                    currencyCode
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        ';
+
+            $responseAll = $graphqlService->query($store, $queryAll, ['first' => 10]);
+
+            $allOrders = [];
+            if ($responseAll && isset($responseAll['data']['orders']['edges'])) {
+                $allOrders = array_map(function ($edge) {
+                    return [
+                        'id' => str_replace('gid://shopify/Order/', '', $edge['node']['id']),
+                        'name' => $edge['node']['name'],
+                        'created_at' => $edge['node']['createdAt'],
+                        'amount' => $edge['node']['totalPriceSet']['shopMoney']['amount'],
+                    ];
+                }, $responseAll['data']['orders']['edges']);
+            }
+
+            return response()->json([
+                'success' => true,
+                'store_domain' => $store->shop_domain,
+                'target_date_range' => [
+                    'start' => $startDate,
+                    'end' => $endDate,
+                    'start_carbon' => $startCarbon->toISOString(),
+                    'end_carbon' => $endCarbon->endOfDay()->toISOString(),
+                ],
+                'known_order' => [
+                    'id' => '6814571102499',
+                    'created_at' => '2025-07-15T13:11:48Z',
+                ],
+                'date_format_tests' => $results,
+                'all_orders_test' => [
+                    'count' => count($allOrders),
+                    'orders' => $allOrders,
+                ],
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'error' => 'Debug failed',
+                'message' => $e->getMessage(),
+            ], 500);
+        }
+    }
 }

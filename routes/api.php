@@ -14,4 +14,5 @@ Route::prefix('analytics')->group(function () {
     Route::get('/debug/all-orders', [AnalyticsController::class, 'debugAllOrders']);
     Route::get('/debug/date-range', [AnalyticsController::class, 'debugDateRange']);
     Route::get('/debug/debugscopes', [AnalyticsController::class, 'debugScopes']);
+    Route::get('/debug/graphql-date-query', [AnalyticsController::class, 'debugGraphQLDateQuery']);
 });

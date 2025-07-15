@@ -186,16 +186,32 @@ class ShopifyGraphQLService
      */
     public function getOrdersByDateRange(Store $store, Carbon $startDate, Carbon $endDate, int $limit = 250): array
     {
+        // Use the working date format from your debug test
         $dateQuery = sprintf(
             'created_at:>=%s AND created_at:<=%s',
-            $startDate->toISOString(),
-            $endDate->toISOString()
+            $startDate->format('Y-m-d'),  // This format worked in your debug
+            $endDate->format('Y-m-d')
         );
 
-        return $this->getOrders($store, [
+        Log::info('ShopifyGraphQLService getOrdersByDateRange', [
+            'store' => $store->shop_domain,
+            'date_query' => $dateQuery,
+            'start_date' => $startDate->toDateString(),
+            'end_date' => $endDate->toDateString(),
+        ]);
+
+        $result = $this->getOrders($store, [
             'first' => $limit,
             'query' => $dateQuery,
         ]);
+
+        Log::info('ShopifyGraphQLService getOrdersByDateRange result', [
+            'store' => $store->shop_domain,
+            'orders_found' => isset($result['orders']) ? count($result['orders']) : 0,
+            'has_error' => isset($result['error']),
+        ]);
+
+        return $result;
     }
 
     /**
