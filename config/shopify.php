@@ -31,6 +31,7 @@ return [
         'read_content',
         'read_themes',
         'read_analytics',
+        'read_reports', // Required for report generation
     ],
 
     /*
