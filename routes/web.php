@@ -70,7 +70,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
             ->name('dashboard.destroy');
 
         // Dashboard data and widget routes
-        Route::get('/dashboard/{id}/data', [DashboardController::class, 'fetchData'])
+        Route::get('/dashboard/{id}/fetch-data', [DashboardController::class, 'fetchData'])
             ->name('dashboard.data');
         Route::put('/dashboard/{id}/layout', [DashboardController::class, 'updateLayout'])
             ->name('dashboard.layout.update');

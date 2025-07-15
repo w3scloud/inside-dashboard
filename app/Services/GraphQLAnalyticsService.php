@@ -518,7 +518,7 @@ class GraphQLAnalyticsService
     /**
      * Get inventory analytics.
      */
-    protected function getInventoryAnalytics(Store $store): array
+    public function getInventoryAnalytics(Store $store): array
     {
         $productAnalytics = $this->getProductAnalytics($store);
 
@@ -541,7 +541,7 @@ class GraphQLAnalyticsService
     /**
      * Get performance metrics.
      */
-    protected function getPerformanceMetrics(Store $store): array
+    public function getPerformanceMetrics(Store $store): array
     {
         $salesAnalytics = $this->getSalesAnalytics($store);
         $productAnalytics = $this->getProductAnalytics($store);
@@ -625,7 +625,7 @@ class GraphQLAnalyticsService
     /**
      * Get data source status.
      */
-    protected function getDataSourceStatus(Store $store): array
+    public function getDataSourceStatus(Store $store): array
     {
         try {
             // Test GraphQL endpoints

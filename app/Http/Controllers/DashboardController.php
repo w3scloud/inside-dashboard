@@ -3,105 +3,82 @@
 namespace App\Http\Controllers;
 
 use App\Models\Dashboard;
-use App\Services\AnalyticsService;
+use App\Services\GraphQLAnalyticsService;
+use App\Services\ShopifyService;
 use Carbon\Carbon;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Str;
+use Illuminate\Support\Facades\Log;
 use Inertia\Inertia;
+use Inertia\Response;
 
 class DashboardController extends Controller
 {
     protected $analyticsService;
 
-    /**
-     * Create a new controller instance.
-     *
-     * @return void
-     */
-    public function __construct(AnalyticsService $analyticsService)
+    protected $shopifyService;
+
+    public function __construct(GraphQLAnalyticsService $analyticsService, ShopifyService $shopifyService)
     {
         $this->analyticsService = $analyticsService;
+        $this->shopifyService = $shopifyService;
     }
 
     /**
-     * Display the dashboard index.
-     *
-     * @return \Inertia\Response
+     * Display a listing of the dashboards.
      */
-    public function index(Request $request)
+    public function index(): Response
     {
         $user = Auth::user();
         $store = $user->stores()->active()->first();
 
         if (! $store) {
-            return Inertia::render('Dashboard/NoStore');
+            return Inertia::render('Dashboard/Index', [
+                'dashboards' => [],
+                'store' => null,
+                'error' => 'No active store found. Please connect your Shopify store.',
+            ]);
         }
 
-        // Get all dashboards for the store
         $dashboards = $store->dashboards()
             ->orderBy('is_default', 'desc')
             ->orderBy('last_viewed_at', 'desc')
-            ->get()
-            ->map(function ($dashboard) {
-                return [
-                    'id' => $dashboard->id,
-                    'name' => $dashboard->name,
-                    'description' => $dashboard->description,
-                    'is_default' => $dashboard->is_default,
-                    'last_viewed_at' => $dashboard->last_viewed_at ? $dashboard->last_viewed_at->diffForHumans() : null,
-                ];
-            });
+            ->get();
 
         // If no dashboards exist, create a default one
         if ($dashboards->isEmpty()) {
-            $dashboard = $this->createDefaultDashboard($store);
-
-            return redirect()->route('dashboard.show', $dashboard->id);
+            $defaultDashboard = $this->createDefaultDashboard($store);
+            $dashboards = collect([$defaultDashboard]);
         }
 
-        // If there's only one dashboard, redirect to it
-        if ($dashboards->count() === 1) {
-            return redirect()->route('dashboard.show', $dashboards->first()['id']);
-        }
+        // Redirect to the default dashboard
+        $defaultDashboard = $dashboards->where('is_default', true)->first()
+            ?? $dashboards->first();
 
-        return Inertia::render('Dashboard/Index', [
-            'dashboards' => $dashboards,
-            'store' => [
-                'id' => $store->id,
-                'name' => $store->name,
-                'domain' => $store->shop_domain,
-            ],
-        ]);
+        return redirect()->route('dashboard.show', $defaultDashboard->id);
     }
 
     /**
      * Show the form for creating a new dashboard.
-     *
-     * @return \Inertia\Response
      */
-    public function create()
+    public function create(): Response
     {
         $user = Auth::user();
         $store = $user->stores()->active()->first();
 
         if (! $store) {
-            return Inertia::render('Dashboard/NoStore');
+            return redirect()->route('dashboard')
+                ->with('error', 'No active store found.');
         }
 
         return Inertia::render('Dashboard/Create', [
-            'store' => [
-                'id' => $store->id,
-                'name' => $store->name,
-                'domain' => $store->shop_domain,
-            ],
+            'store' => $store,
         ]);
     }
 
     /**
      * Store a newly created dashboard in storage.
-     *
-     * @return \Illuminate\Http\RedirectResponse
      */
     public function store(Request $request)
     {
@@ -123,13 +100,11 @@ class DashboardController extends Controller
             'name' => $validated['name'],
             'description' => $validated['description'] ?? null,
             'is_default' => $validated['is_default'] ?? false,
-            'layout' => [],
+            'layout' => $this->getDefaultLayout(),
             'settings' => [
-                'date_range' => [
-                    'start' => Carbon::now()->subDays(30)->format('Y-m-d'),
-                    'end' => Carbon::now()->format('Y-m-d'),
-                ],
-                'refresh_interval' => 0,
+                'refresh_interval' => 300, // 5 minutes
+                'date_range' => '30days',
+                'timezone' => config('app.timezone'),
             ],
         ]);
 
@@ -146,89 +121,52 @@ class DashboardController extends Controller
 
     /**
      * Display the specified dashboard.
-     *
-     * @param  int  $id
-     * @return \Inertia\Response
      */
-    public function show($id)
+    public function show($id): Response
     {
         $user = Auth::user();
         $store = $user->stores()->active()->first();
 
         if (! $store) {
-            return Inertia::render('Dashboard/NoStore');
+            return redirect()->route('dashboard')
+                ->with('error', 'No active store found.');
         }
 
         $dashboard = $store->dashboards()->findOrFail($id);
 
         // Update last viewed timestamp
-        $dashboard->updateLastViewed();
-
-        // Get widgets from layout
-        $widgets = $dashboard->getWidgetsFromLayout();
-
-        // Get date range from settings
-        $dateRange = $dashboard->settings['date_range'] ?? [
-            'start' => Carbon::now()->subDays(30)->format('Y-m-d'),
-            'end' => Carbon::now()->format('Y-m-d'),
-        ];
+        $dashboard->touch('last_viewed_at');
 
         return Inertia::render('Dashboard/Show', [
-            'dashboard' => [
-                'id' => $dashboard->id,
-                'name' => $dashboard->name,
-                'description' => $dashboard->description,
-                'is_default' => $dashboard->is_default,
-                'layout' => $widgets,
-                'settings' => $dashboard->settings,
-            ],
-            'date_range' => $dateRange,
-            'store' => [
-                'id' => $store->id,
-                'name' => $store->name,
-                'domain' => $store->shop_domain,
-            ],
+            'dashboard' => $dashboard,
+            'store' => $store,
+            'availableWidgets' => $this->getAvailableWidgets(),
         ]);
     }
 
     /**
      * Show the form for editing the specified dashboard.
-     *
-     * @param  int  $id
-     * @return \Inertia\Response
      */
-    public function edit($id)
+    public function edit($id): Response
     {
         $user = Auth::user();
         $store = $user->stores()->active()->first();
 
         if (! $store) {
-            return Inertia::render('Dashboard/NoStore');
+            return redirect()->route('dashboard')
+                ->with('error', 'No active store found.');
         }
 
         $dashboard = $store->dashboards()->findOrFail($id);
 
         return Inertia::render('Dashboard/Edit', [
-            'dashboard' => [
-                'id' => $dashboard->id,
-                'name' => $dashboard->name,
-                'description' => $dashboard->description,
-                'is_default' => $dashboard->is_default,
-                'settings' => $dashboard->settings,
-            ],
-            'store' => [
-                'id' => $store->id,
-                'name' => $store->name,
-                'domain' => $store->shop_domain,
-            ],
+            'dashboard' => $dashboard,
+            'store' => $store,
         ]);
     }
 
     /**
      * Update the specified dashboard in storage.
-     *
-     * @param  int  $id
-     * @return \Illuminate\Http\RedirectResponse
      */
     public function update(Request $request, $id)
     {
@@ -267,9 +205,6 @@ class DashboardController extends Controller
 
     /**
      * Remove the specified dashboard from storage.
-     *
-     * @param  int  $id
-     * @return \Illuminate\Http\RedirectResponse
      */
     public function destroy($id)
     {
@@ -308,12 +243,9 @@ class DashboardController extends Controller
     }
 
     /**
-     * Fetch data for the dashboard.
-     *
-     * @param  int  $id
-     * @return \Illuminate\Http\JsonResponse
+     * Fetch data for the dashboard using GraphQL Analytics Service.
      */
-    public function fetchData($id, Request $request)
+    public function fetchData($id, Request $request): JsonResponse
     {
         $user = Auth::user();
         $store = $user->stores()->active()->first();
@@ -327,59 +259,129 @@ class DashboardController extends Controller
 
         $dashboard = $store->dashboards()->findOrFail($id);
 
-        // Get date range from request or settings
-        $startDate = $request->input('start_date');
-        $endDate = $request->input('end_date');
+        // Get date range from request
+        $startDate = $request->input('start_date') ?
+            Carbon::parse($request->input('start_date')) :
+            now()->subDays(30);
+        $endDate = $request->input('end_date') ?
+            Carbon::parse($request->input('end_date')) :
+            now();
 
-        if (! $startDate || ! $endDate) {
-            $dateRange = $dashboard->settings['date_range'] ?? null;
-
-            if ($dateRange) {
-                $startDate = $dateRange['start'];
-                $endDate = $dateRange['end'];
-            } else {
-                $startDate = Carbon::now()->subDays(30)->format('Y-m-d');
-                $endDate = Carbon::now()->format('Y-m-d');
-            }
-        }
-
-        $startDate = Carbon::parse($startDate);
-        $endDate = Carbon::parse($endDate);
-
-        // Get widgets from layout
-        $widgets = $dashboard->getWidgetsFromLayout();
-
-        // Fetch data for each widget
-        $widgetData = [];
-
-        foreach ($widgets as $widget) {
-            $widgetId = $widget['id'];
-            $widgetType = $widget['type'];
-            $dataSource = $widget['data_source'];
-            $filters = $widget['filters'] ?? [];
-
-            $data = $this->getWidgetData($store, $widgetType, $dataSource, $startDate, $endDate, $filters);
-
-            $widgetData[$widgetId] = $data;
-        }
-
-        return response()->json([
-            'success' => true,
-            'data' => $widgetData,
-            'date_range' => [
-                'start' => $startDate->format('Y-m-d'),
-                'end' => $endDate->format('Y-m-d'),
-            ],
+        Log::info('DashboardController fetchData called', [
+            'store_id' => $store->id,
+            'dashboard_id' => $id,
+            'start_date' => $startDate->toDateString(),
+            'end_date' => $endDate->toDateString(),
         ]);
+
+        try {
+            // Get all analytics data using your working GraphQLAnalyticsService
+            $salesAnalytics = $this->analyticsService->getSalesAnalytics($store, $startDate, $endDate);
+            $productAnalytics = $this->analyticsService->getProductAnalytics($store);
+            $inventoryAnalytics = $this->analyticsService->getInventoryAnalytics($store);
+
+            Log::info('Analytics data retrieved in dashboard', [
+                'sales_total' => $salesAnalytics['summary']['total_sales'] ?? 0,
+                'sales_orders' => $salesAnalytics['summary']['total_orders'] ?? 0,
+                'products_count' => isset($productAnalytics['summary']) ? $productAnalytics['summary']['total_products'] : 0,
+            ]);
+
+            // Process widgets data
+            $widgetData = [];
+
+            foreach ($dashboard->layout as $widget) {
+                $widgetId = $widget['id'];
+                $widgetType = $widget['type'] ?? 'metric';
+                $dataSource = $widget['data_source'] ?? 'sales';
+
+                try {
+                    switch ($dataSource) {
+                        case 'sales':
+                            $widgetData[$widgetId] = $this->processSalesWidget($widget, $salesAnalytics);
+                            break;
+
+                        case 'products':
+                            $widgetData[$widgetId] = $this->processProductWidget($widget, $productAnalytics);
+                            break;
+
+                        case 'inventory':
+                            $widgetData[$widgetId] = $this->processInventoryWidget($widget, $inventoryAnalytics);
+                            break;
+
+                        default:
+                            $widgetData[$widgetId] = $this->processDefaultWidget($widget, $salesAnalytics);
+                            break;
+                    }
+                } catch (\Exception $e) {
+                    Log::error('Error processing widget', [
+                        'widget_id' => $widgetId,
+                        'widget_type' => $widgetType,
+                        'data_source' => $dataSource,
+                        'error' => $e->getMessage(),
+                    ]);
+
+                    // Provide fallback data for failed widgets
+                    $widgetData[$widgetId] = [
+                        'error' => true,
+                        'message' => 'Unable to load widget data',
+                        'value' => 0,
+                    ];
+                }
+            }
+
+            // Update last viewed
+            $dashboard->touch('last_viewed_at');
+
+            return response()->json([
+                'success' => true,
+                'data' => $widgetData,
+                'summary' => [
+                    'total_sales' => $salesAnalytics['summary']['total_sales'] ?? 0,
+                    'total_orders' => $salesAnalytics['summary']['total_orders'] ?? 0,
+                    'average_order_value' => $salesAnalytics['summary']['average_order_value'] ?? 0,
+                    'currency' => $salesAnalytics['summary']['currency'] ?? 'USD',
+                    'growth_rate' => $salesAnalytics['summary']['growth_rate'] ?? 0,
+                ],
+                'charts' => [
+                    'daily_sales' => $salesAnalytics['daily_sales'] ?? [],
+                    'hourly_sales' => $salesAnalytics['hourly_sales'] ?? [],
+                    'top_products' => $salesAnalytics['top_products'] ?? [],
+                    'status_breakdown' => $salesAnalytics['status_breakdown'] ?? [],
+                ],
+                'period' => [
+                    'start' => $startDate->toDateString(),
+                    'end' => $endDate->toDateString(),
+                    'days' => $startDate->diffInDays($endDate) + 1,
+                ],
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Error fetching dashboard data', [
+                'dashboard_id' => $id,
+                'store_id' => $store->id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to fetch dashboard data',
+                'error' => $e->getMessage(),
+                'data' => [],
+                'summary' => [
+                    'total_sales' => 0,
+                    'total_orders' => 0,
+                    'average_order_value' => 0,
+                    'currency' => 'USD',
+                ],
+            ], 500);
+        }
     }
 
     /**
-     * Update dashboard layout.
-     *
-     * @param  int  $id
-     * @return \Illuminate\Http\JsonResponse
+     * Update the dashboard layout.
      */
-    public function updateLayout($id, Request $request)
+    public function updateLayout($id, Request $request): JsonResponse
     {
         $user = Auth::user();
         $store = $user->stores()->active()->first();
@@ -397,22 +399,20 @@ class DashboardController extends Controller
             'layout' => 'required|array',
         ]);
 
-        $dashboard->update(['layout' => $validated['layout']]);
+        $dashboard->update([
+            'layout' => $validated['layout'],
+        ]);
 
         return response()->json([
             'success' => true,
-            'message' => 'Dashboard layout updated successfully.',
-            'layout' => $dashboard->layout,
+            'message' => 'Layout updated successfully.',
         ]);
     }
 
     /**
      * Add a widget to the dashboard.
-     *
-     * @param  int  $id
-     * @return \Illuminate\Http\JsonResponse
      */
-    public function addWidget($id, Request $request)
+    public function addWidget($id, Request $request): JsonResponse
     {
         $user = Auth::user();
         $store = $user->stores()->active()->first();
@@ -427,29 +427,27 @@ class DashboardController extends Controller
         $dashboard = $store->dashboards()->findOrFail($id);
 
         $validated = $request->validate([
-            'title' => 'required|string|max:255',
             'type' => 'required|string',
-            'chart_type' => 'nullable|string',
+            'title' => 'required|string|max:255',
             'data_source' => 'required|string',
-            'size' => 'required|array',
-            'position' => 'required|array',
+            'chart_type' => 'nullable|string',
+            'size' => 'nullable|array',
+            'position' => 'nullable|array',
             'config' => 'nullable|array',
             'filters' => 'nullable|array',
         ]);
 
-        // Generate unique widget ID
-        $widgetId = Str::uuid()->toString();
-
         $widget = [
-            'id' => $widgetId,
-            'title' => $validated['title'],
+            'id' => uniqid('widget_'),
             'type' => $validated['type'],
-            'chart_type' => $validated['chart_type'] ?? null,
+            'title' => $validated['title'],
             'data_source' => $validated['data_source'],
-            'size' => $validated['size'],
-            'position' => $validated['position'],
+            'chart_type' => $validated['chart_type'] ?? null,
+            'size' => $validated['size'] ?? ['w' => 6, 'h' => 4],
+            'position' => $validated['position'] ?? ['x' => 0, 'y' => 0],
             'config' => $validated['config'] ?? [],
             'filters' => $validated['filters'] ?? [],
+            'created_at' => now()->toISOString(),
         ];
 
         $dashboard->addWidget($widget);
@@ -463,12 +461,8 @@ class DashboardController extends Controller
 
     /**
      * Update a dashboard widget.
-     *
-     * @param  int  $id
-     * @param  string  $widgetId
-     * @return \Illuminate\Http\JsonResponse
      */
-    public function updateWidget($id, $widgetId, Request $request)
+    public function updateWidget($id, $widgetId, Request $request): JsonResponse
     {
         $user = Auth::user();
         $store = $user->stores()->active()->first();
@@ -508,12 +502,8 @@ class DashboardController extends Controller
 
     /**
      * Remove a widget from the dashboard.
-     *
-     * @param  int  $id
-     * @param  string  $widgetId
-     * @return \Illuminate\Http\JsonResponse
      */
-    public function removeWidget($id, $widgetId)
+    public function removeWidget($id, $widgetId): JsonResponse
     {
         $user = Auth::user();
         $store = $user->stores()->active()->first();
@@ -536,186 +526,238 @@ class DashboardController extends Controller
     }
 
     /**
-     * Get data for a specific widget.
+     * Process sales widget data.
      */
-    private function getWidgetData($store, $widgetType, $dataSource, $startDate, $endDate, $filters = [])
+    private function processSalesWidget($widget, $salesAnalytics): array
     {
-        switch ($dataSource) {
-            case 'sales':
-                return $this->getSalesData($store, $widgetType, $startDate, $endDate, $filters);
-
-            case 'products':
-                return $this->getProductsData($store, $widgetType, $startDate, $endDate, $filters);
-
-            case 'inventory':
-                return $this->getInventoryData($store, $widgetType, $filters);
-
-            case 'customers':
-                return $this->getCustomersData($store, $widgetType, $startDate, $endDate, $filters);
-
-            default:
-                return null;
-        }
-    }
-
-    /**
-     * Get sales data for a widget.
-     */
-    private function getSalesData($store, $widgetType, $startDate, $endDate, $filters)
-    {
-        // Use analytics service to get sales data
-        $productPerformance = $this->analyticsService->getProductPerformance(
-            $store,
-            $startDate,
-            $endDate,
-            $filters
-        );
+        $widgetType = $widget['type'] ?? 'metric';
+        $title = $widget['title'] ?? 'Sales';
 
         switch ($widgetType) {
-            case 'kpi':
+            case 'metric':
                 return [
-                    'total_sales' => $productPerformance['total_sales'],
-                    'total_orders' => $productPerformance['total_orders'],
-                    'avg_order_value' => $productPerformance['avg_order_value'],
+                    'type' => 'metric',
+                    'title' => $title,
+                    'value' => $salesAnalytics['summary']['total_sales'] ?? 0,
+                    'label' => 'Total Sales',
+                    'currency' => $salesAnalytics['summary']['currency'] ?? 'USD',
+                    'change' => $salesAnalytics['summary']['growth_rate'] ?? 0,
+                    'subtitle' => ($salesAnalytics['summary']['total_orders'] ?? 0).' orders',
                 ];
 
-            case 'timeline':
+            case 'chart':
+                $chartType = $widget['chart_type'] ?? 'line';
+                $dailySales = $salesAnalytics['daily_sales'] ?? [];
+
                 return [
-                    'timeline' => $productPerformance['timeline'],
+                    'type' => 'chart',
+                    'chart_type' => $chartType,
+                    'title' => $title,
+                    'data' => [
+                        'labels' => array_column($dailySales, 'date'),
+                        'datasets' => [
+                            [
+                                'label' => 'Sales',
+                                'data' => array_column($dailySales, 'sales'),
+                                'borderColor' => '#3B82F6',
+                                'backgroundColor' => 'rgba(59, 130, 246, 0.1)',
+                                'tension' => 0.4,
+                            ],
+                        ],
+                    ],
+                    'options' => [
+                        'responsive' => true,
+                        'plugins' => [
+                            'legend' => [
+                                'display' => false,
+                            ],
+                        ],
+                        'scales' => [
+                            'y' => [
+                                'beginAtZero' => true,
+                            ],
+                        ],
+                    ],
                 ];
 
-            case 'table':
+            case 'list':
+                $topProducts = $salesAnalytics['top_products'] ?? [];
+
                 return [
-                    'products' => array_slice($productPerformance['products'], 0, 10),
+                    'type' => 'list',
+                    'title' => $title,
+                    'items' => array_slice($topProducts, 0, 5),
+                    'total' => count($topProducts),
                 ];
 
             default:
-                return $productPerformance;
+                return [
+                    'type' => 'metric',
+                    'title' => $title,
+                    'value' => $salesAnalytics['summary']['total_sales'] ?? 0,
+                    'currency' => $salesAnalytics['summary']['currency'] ?? 'USD',
+                ];
         }
     }
 
     /**
-     * Get products data for a widget.
+     * Process product widget data.
      */
-    private function getProductsData($store, $widgetType, $startDate, $endDate, $filters)
+    private function processProductWidget($widget, $productAnalytics): array
     {
-        // Use analytics service to get product data
-        $productSummary = $this->analyticsService->getProductSummary(
-            $store,
-            $startDate,
-            $endDate,
-            $filters
-        );
+        $widgetType = $widget['type'] ?? 'metric';
+        $title = $widget['title'] ?? 'Products';
+
+        if (isset($productAnalytics['error'])) {
+            return [
+                'type' => $widgetType,
+                'title' => $title,
+                'error' => true,
+                'message' => 'Unable to load product data',
+                'value' => 0,
+            ];
+        }
 
         switch ($widgetType) {
-            case 'kpi':
+            case 'metric':
                 return [
-                    'total_products' => $productSummary['total_products'],
-                    'active_products' => $productSummary['active_products'],
+                    'type' => 'metric',
+                    'title' => $title,
+                    'value' => $productAnalytics['summary']['total_products'] ?? 0,
+                    'label' => 'Total Products',
+                    'subtitle' => ($productAnalytics['summary']['total_variants'] ?? 0).' variants',
                 ];
 
-            case 'top_selling':
+            case 'list':
+                $topProducts = array_slice($productAnalytics['by_vendor'] ?? [], 0, 10);
+
                 return [
-                    'products' => $productSummary['top_selling'],
+                    'type' => 'list',
+                    'title' => $title,
+                    'items' => array_map(function ($vendor, $count) {
+                        return [
+                            'title' => $vendor,
+                            'value' => $count,
+                            'subtitle' => $count.' products',
+                        ];
+                    }, array_keys($topProducts), $topProducts),
+                    'total' => count($productAnalytics['by_vendor'] ?? []),
                 ];
 
-            case 'low_selling':
+            case 'chart':
+                $chartType = $widget['chart_type'] ?? 'doughnut';
+                $inventoryStatus = $productAnalytics['inventory_status'] ?? [];
+
                 return [
-                    'products' => $productSummary['low_selling'],
+                    'type' => 'chart',
+                    'chart_type' => $chartType,
+                    'title' => $title,
+                    'data' => [
+                        'labels' => ['In Stock', 'Low Stock', 'Out of Stock'],
+                        'datasets' => [
+                            [
+                                'data' => [
+                                    $inventoryStatus['in_stock'] ?? 0,
+                                    $inventoryStatus['low_stock'] ?? 0,
+                                    $inventoryStatus['out_of_stock'] ?? 0,
+                                ],
+                                'backgroundColor' => [
+                                    '#10B981',
+                                    '#F59E0B',
+                                    '#EF4444',
+                                ],
+                            ],
+                        ],
+                    ],
                 ];
 
             default:
-                return $productSummary;
+                return [
+                    'type' => 'metric',
+                    'title' => $title,
+                    'value' => $productAnalytics['summary']['total_products'] ?? 0,
+                ];
         }
     }
 
     /**
-     * Get inventory data for a widget.
+     * Process inventory widget data.
      */
-    private function getInventoryData($store, $widgetType, $filters)
+    private function processInventoryWidget($widget, $inventoryAnalytics): array
     {
-        // Use analytics service to get inventory data
-        $inventorySummary = $this->analyticsService->getInventorySummary($store, $filters);
+        $widgetType = $widget['type'] ?? 'metric';
+        $title = $widget['title'] ?? 'Inventory';
+
+        if (isset($inventoryAnalytics['error'])) {
+            return [
+                'type' => $widgetType,
+                'title' => $title,
+                'error' => true,
+                'message' => 'Unable to load inventory data',
+                'value' => 0,
+            ];
+        }
 
         switch ($widgetType) {
-            case 'kpi':
+            case 'metric':
+                $alerts = $inventoryAnalytics['alerts'] ?? [];
+
                 return [
-                    'total_items' => $inventorySummary['total_items'],
-                    'out_of_stock' => $inventorySummary['out_of_stock'],
-                    'low_stock' => $inventorySummary['low_stock'],
+                    'type' => 'metric',
+                    'title' => $title,
+                    'value' => $alerts['needs_attention'] ?? 0,
+                    'label' => 'Items Need Attention',
+                    'subtitle' => 'Low stock alerts',
                 ];
 
-            case 'pie_chart':
+            case 'list':
+                $lowStockItems = $inventoryAnalytics['low_stock_items'] ?? [];
+
                 return [
-                    'stock_status' => $inventorySummary['stock_status'],
+                    'type' => 'list',
+                    'title' => $title,
+                    'items' => array_slice($lowStockItems, 0, 10),
+                    'total' => count($lowStockItems),
                 ];
 
             default:
-                return $inventorySummary;
+                return [
+                    'type' => 'metric',
+                    'title' => $title,
+                    'value' => ($inventoryAnalytics['alerts']['needs_attention'] ?? 0),
+                ];
         }
     }
 
     /**
-     * Get customers data for a widget.
+     * Process default widget data.
      */
-    private function getCustomersData($store, $widgetType, $startDate, $endDate, $filters)
+    private function processDefaultWidget($widget, $salesAnalytics): array
     {
-        // Use analytics service to get customer data
-        $customerSummary = $this->analyticsService->getCustomerSummary(
-            $store,
-            $startDate,
-            $endDate,
-            $filters
-        );
-
-        $customerSegments = $this->analyticsService->getCustomerSegments(
-            $store,
-            $startDate,
-            $endDate,
-            $filters
-        );
-
-        switch ($widgetType) {
-            case 'kpi':
-                return [
-                    'total_customers' => $customerSummary['total_customers'],
-                    'new_customers' => $customerSummary['new_customers'],
-                    'returning_customers' => $customerSummary['returning_customers'],
-                ];
-
-            case 'top_customers':
-                return [
-                    'customers' => $customerSummary['top_customers'],
-                ];
-
-            case 'segments':
-                return [
-                    'segments' => $customerSegments['segments'],
-                ];
-
-            default:
-                return array_merge($customerSummary, ['segments' => $customerSegments['segments']]);
-        }
+        return [
+            'type' => 'metric',
+            'title' => $widget['title'] ?? 'Sales Data',
+            'value' => $salesAnalytics['summary']['total_sales'] ?? 0,
+            'currency' => $salesAnalytics['summary']['currency'] ?? 'USD',
+            'label' => 'Total Sales',
+        ];
     }
 
     /**
-     * Create a default dashboard for a store.
+     * Create a default dashboard for new stores.
      */
-    private function createDefaultDashboard($store)
+    private function createDefaultDashboard($store): Dashboard
     {
         $dashboard = new Dashboard([
-            'name' => 'Overview',
-            'description' => 'Default store overview dashboard',
+            'name' => 'Main Dashboard',
+            'description' => 'Default dashboard with essential metrics',
             'is_default' => true,
             'layout' => $this->getDefaultLayout(),
             'settings' => [
-                'date_range' => [
-                    'start' => Carbon::now()->subDays(30)->format('Y-m-d'),
-                    'end' => Carbon::now()->format('Y-m-d'),
-                ],
-                'refresh_interval' => 0,
+                'refresh_interval' => 300,
+                'date_range' => '30days',
+                'timezone' => config('app.timezone'),
             ],
-            'last_viewed_at' => now(),
         ]);
 
         $store->dashboards()->save($dashboard);
@@ -724,71 +766,92 @@ class DashboardController extends Controller
     }
 
     /**
-     * Get default dashboard layout.
+     * Get default layout for new dashboards.
      */
-    private function getDefaultLayout()
+    private function getDefaultLayout(): array
     {
         return [
             [
-                'id' => Str::uuid()->toString(),
+                'id' => 'total_sales',
+                'type' => 'metric',
                 'title' => 'Total Sales',
-                'type' => 'kpi',
-                'data_source' => 'sales',
-                'size' => ['w' => 1, 'h' => 1],
-                'position' => ['x' => 0, 'y' => 0],
-                'config' => ['display' => 'currency'],
-                'filters' => [],
-            ],
-            [
-                'id' => Str::uuid()->toString(),
-                'title' => 'Total Orders',
-                'type' => 'kpi',
-                'data_source' => 'sales',
-                'size' => ['w' => 1, 'h' => 1],
-                'position' => ['x' => 1, 'y' => 0],
-                'config' => ['display' => 'number'],
-                'filters' => [],
-            ],
-            [
-                'id' => Str::uuid()->toString(),
-                'title' => 'Average Order Value',
-                'type' => 'kpi',
-                'data_source' => 'sales',
-                'size' => ['w' => 1, 'h' => 1],
-                'position' => ['x' => 2, 'y' => 0],
-                'config' => ['display' => 'currency'],
-                'filters' => [],
-            ],
-            [
-                'id' => Str::uuid()->toString(),
-                'title' => 'Sales Over Time',
-                'type' => 'timeline',
-                'chart_type' => 'line',
                 'data_source' => 'sales',
                 'size' => ['w' => 3, 'h' => 2],
-                'position' => ['x' => 0, 'y' => 1],
-                'config' => [],
-                'filters' => [],
+                'position' => ['x' => 0, 'y' => 0],
             ],
             [
-                'id' => Str::uuid()->toString(),
-                'title' => 'Top Selling Products',
-                'type' => 'table',
+                'id' => 'total_orders',
+                'type' => 'metric',
+                'title' => 'Total Orders',
                 'data_source' => 'sales',
-                'size' => ['w' => 2, 'h' => 2],
-                'position' => ['x' => 0, 'y' => 3],
-                'config' => [],
-                'filters' => [],
+                'size' => ['w' => 3, 'h' => 2],
+                'position' => ['x' => 3, 'y' => 0],
             ],
             [
-                'id' => Str::uuid()->toString(),
-                'title' => 'Inventory Status',
-                'type' => 'pie_chart',
-                'data_source' => 'inventory',
-                'size' => ['w' => 1, 'h' => 2],
-                'position' => ['x' => 2, 'y' => 3],
-                'config' => [],
-                'filters' => [],
+                'id' => 'avg_order_value',
+                'type' => 'metric',
+                'title' => 'Average Order Value',
+                'data_source' => 'sales',
+                'size' => ['w' => 3, 'h' => 2],
+                'position' => ['x' => 6, 'y' => 0],
+            ],
+            [
+                'id' => 'total_products',
+                'type' => 'metric',
+                'title' => 'Total Products',
+                'data_source' => 'products',
+                'size' => ['w' => 3, 'h' => 2],
+                'position' => ['x' => 9, 'y' => 0],
+            ],
+            [
+                'id' => 'sales_chart',
+                'type' => 'chart',
+                'title' => 'Sales Over Time',
+                'data_source' => 'sales',
+                'chart_type' => 'line',
+                'size' => ['w' => 8, 'h' => 4],
+                'position' => ['x' => 0, 'y' => 2],
+            ],
+            [
+                'id' => 'top_products',
+                'type' => 'list',
+                'title' => 'Top Products',
+                'data_source' => 'sales',
+                'size' => ['w' => 4, 'h' => 4],
+                'position' => ['x' => 8, 'y' => 2],
+            ],
+        ];
+    }
+
+    /**
+     * Get available widget types.
+     */
+    private function getAvailableWidgets(): array
+    {
+        return [
+            [
+                'type' => 'metric',
+                'name' => 'Metric Card',
+                'description' => 'Display a single key metric',
+                'icon' => 'chart-bar',
+            ],
+            [
+                'type' => 'chart',
+                'name' => 'Chart',
+                'description' => 'Visualize data with charts',
+                'icon' => 'chart-line',
+            ],
+            [
+                'type' => 'list',
+                'name' => 'List',
+                'description' => 'Show data in list format',
+                'icon' => 'list-bullet',
+            ],
+            [
+                'type' => 'table',
+                'name' => 'Table',
+                'description' => 'Display data in table format',
+                'icon' => 'table-cells',
             ],
         ];
     }
