@@ -313,7 +313,7 @@ class DataCollectionService
                         $params['page_info'] = $pageInfo;
                     }
 
-                    $response = $this->shopifyService->makeApiCall($store, 'GET', '/admin/api/2023-07/orders.json', $params);
+                    $response = $this->shopifyService->makeApiCall($store, 'GET', '/admin/api/2023-07/orders.json', []);
 
                     if (! $response || ! isset($response['orders'])) {
                         Log::warning('Invalid orders response', ['store_id' => $store->id, 'page' => $currentPage]);

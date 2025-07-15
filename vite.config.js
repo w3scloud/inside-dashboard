@@ -3,15 +3,9 @@ import laravel from 'laravel-vite-plugin';
 import vue from '@vitejs/plugin-vue';
 
 export default defineConfig({
-    server: {
-        hmr: {
-            host: '1a03-45-248-150-248.ngrok-free.app',
-            protocol: 'https',
-        },
-    },
     plugins: [
         laravel({
-            input: 'resources/js/app.js',
+            input: ['resources/css/app.css', 'resources/js/app.js'],
             refresh: true,
         }),
         vue({
@@ -23,4 +17,9 @@ export default defineConfig({
             },
         }),
     ],
+    server: {
+        https: false, // Use HTTP
+        host: 'localhost',
+        port: 5173,
+    },
 });
