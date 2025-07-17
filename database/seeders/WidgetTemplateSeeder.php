@@ -10,6 +10,7 @@ class WidgetTemplateSeeder extends Seeder
 {
     /**
      * Run the database seeds.
+     * This seeder creates predefined widget templates for the dashboard.
      * php artisan db:seed --class=WidgetTemplateSeeder
      */
     public function run(): void
