@@ -213,6 +213,7 @@ class ShopifyGraphQLService
         $after = $options['after'] ?? null;
         $query = $options['query'] ?? null;
 
+        // UPDATED QUERY - Only essential analytics data, no personal info
         $graphqlQuery = '
             query getCustomers($first: Int!, $after: String, $query: String) {
                 customers(first: $first, after: $after, query: $query) {
@@ -220,38 +221,17 @@ class ShopifyGraphQLService
                         cursor
                         node {
                             id
-                            email
-                            firstName
-                            lastName
-                            displayName
-                            phone
                             createdAt
                             updatedAt
-                            acceptsMarketing
-                            ordersCount
-                            totalSpent
+                            emailMarketingConsent {
+                                marketingState
+                            }
+                            numberOfOrders
+                            amountSpent {
+                                amount
+                                currencyCode
+                            }
                             tags
-                            note
-                            defaultAddress {
-                                firstName
-                                lastName
-                                address1
-                                address2
-                                city
-                                province
-                                country
-                                zip
-                            }
-                            addresses {
-                                firstName
-                                lastName
-                                address1
-                                address2
-                                city
-                                province
-                                country
-                                zip
-                            }
                         }
                     }
                     pageInfo {
@@ -279,6 +259,12 @@ class ShopifyGraphQLService
         $response = $this->query($store, $graphqlQuery, $variables);
 
         if (! $response || ! isset($response['data']['customers'])) {
+            Log::warning('Failed to fetch customers', [
+                'store' => $store->shop_domain,
+                'has_response' => (bool) $response,
+                'has_errors' => isset($response['errors']) ? $response['errors'] : 'no errors',
+            ]);
+
             return [
                 'customers' => [],
                 'pageInfo' => null,
@@ -427,33 +413,28 @@ class ShopifyGraphQLService
     /**
      * Transform customers response to consistent format.
      */
-    protected function transformCustomersResponse(array $customerEdges): array
+    private function transformCustomersResponse(array $edges): array
     {
         $customers = [];
 
-        foreach ($customerEdges as $edge) {
-            $node = $edge['node'];
+        foreach ($edges as $edge) {
+            $customer = $edge['node'];
 
-            $customer = [
-                'id' => $this->extractId($node['id']),
-                'email' => $node['email'],
-                'first_name' => $node['firstName'],
-                'last_name' => $node['lastName'],
-                'display_name' => $node['displayName'],
-                'phone' => $node['phone'],
-                'created_at' => $node['createdAt'],
-                'updated_at' => $node['updatedAt'],
-                'accepts_marketing' => $node['acceptsMarketing'],
-                'orders_count' => $node['ordersCount'],
-                'total_spent' => floatval($node['totalSpent']),
-                'tags' => $node['tags'],
-                'note' => $node['note'],
-                'default_address' => $this->transformAddress($node['defaultAddress'] ?? null),
-                'addresses' => array_map([$this, 'transformAddress'], $node['addresses'] ?? []),
+            // Map to expected format with only analytics data
+            $customers[] = [
+                'id' => $customer['id'],
+                'created_at' => $customer['createdAt'],
+                'updated_at' => $customer['updatedAt'],
+
+                // Analytics fields with new API structure
+                'accepts_marketing' => ($customer['emailMarketingConsent']['marketingState'] ?? '') === 'SUBSCRIBED',
+                'orders_count' => $customer['numberOfOrders'] ?? 0,
+                'total_spent' => $customer['amountSpent']['amount'] ?? 0,
+                'currency' => $customer['amountSpent']['currencyCode'] ?? 'USD',
+                'tags' => $customer['tags'] ?? [],
+
                 'cursor' => $edge['cursor'],
             ];
-
-            $customers[] = $customer;
         }
 
         return $customers;

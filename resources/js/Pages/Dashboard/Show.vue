@@ -168,85 +168,138 @@ const refreshData = () => {
 
 const updateLayout = async (newLayout) => {
     try {
-        console.log('Updating layout:', newLayout);
+        console.log('Updating layout - RAW:', newLayout);
 
-        // Use the existing route from your web.php
-        await axios.put(`/dashboard/${props.dashboard.id}/layout`, {
-            layout: newLayout,
-        });
+        // Clean and validate the layout data before sending
+        const cleanLayout = newLayout
+            .filter((item) => item && typeof item === 'object') // Remove null/undefined items
+            .map((item) => ({
+                i: item.i || item.id || `widget_${Date.now()}_${Math.random()}`, // Ensure 'i' exists
+                x: parseInt(item.x) || 0,
+                y: parseInt(item.y) || 0,
+                w: parseInt(item.w) || 4,
+                h: parseInt(item.h) || 4,
+                // Keep any additional properties
+                ...(item.widget_id && { widget_id: item.widget_id }),
+            }))
+            .filter((item) => item.i); // Remove items without valid 'i'
+
+        console.log('Cleaned layout:', cleanLayout);
+
+        if (cleanLayout.length === 0) {
+            console.warn('No valid layout items to update');
+            return;
+        }
+
+        const response = await axios.put(
+            `/dashboard/${props.dashboard.id}/layout`,
+            {
+                layout: cleanLayout,
+            }
+        );
 
         console.log('Layout updated successfully');
     } catch (error) {
         console.error('Error updating layout:', error);
+
+        if (error.response?.status === 422) {
+            console.error('Validation errors:', error.response.data.errors);
+            // Log the actual data that failed validation
+            console.error('Failed layout data:', error.config.data);
+        }
     }
 };
 
 const addWidget = async (widgetType, position) => {
     try {
-        console.log('Adding widget:', { widgetType, position });
+        console.log('=== ADD WIDGET DEBUG ===');
+        console.log('Widget Type:', widgetType);
+        console.log('Position:', position);
+        console.log('Dashboard ID:', props.dashboard.id);
 
-        // Create widget object matching your backend expectations
         const widgetData = {
             widget_type: widgetType,
             position: {
-                x: position?.x || 0,
-                y: position?.y || 0,
-                w:
-                    props.availableWidgets.find((w) => w.type === widgetType)
-                        ?.default_size?.w || 4,
-                h:
-                    props.availableWidgets.find((w) => w.type === widgetType)
-                        ?.default_size?.h || 4,
+                x: parseInt(position?.x) || 0,
+                y: parseInt(position?.y) || 0,
+                w: parseInt(position?.w) || 4,
+                h: parseInt(position?.h) || 4,
             },
         };
 
-        // Make API call to add widget to dashboard
+        console.log('Sending widget data:', widgetData);
+
         const response = await axios.post(
             `/dashboard/${props.dashboard.id}/widget`,
             widgetData
         );
 
-        if (response.data.success) {
-            console.log('Widget added successfully:', response.data.widget);
+        console.log('API Response:', response.data);
 
-            // Update local layout with the new widget
+        if (response.data.success) {
+            console.log('✅ Widget added successfully');
+
+            // Create properly structured widget for layout
             const newWidget = {
-                i: widgetType,
-                x: widgetData.position.x,
-                y: widgetData.position.y,
-                w: widgetData.position.w,
-                h: widgetData.position.h,
+                i: response.data.widget.i,
+                x: response.data.widget.x,
+                y: response.data.widget.y,
+                w: response.data.widget.w,
+                h: response.data.widget.h,
+                ...(response.data.widget.widget_id && {
+                    widget_id: response.data.widget.widget_id,
+                }),
             };
 
-            const newLayout = [...layout.value, newWidget];
-            layout.value = newLayout;
+            console.log('Adding widget to layout:', newWidget);
 
-            // Close the modal
+            // Update layout with proper structure
+            const currentLayout = Array.isArray(layout.value)
+                ? layout.value
+                : [];
+            const newLayout = [...currentLayout, newWidget];
+
+            // Update local state
+            layout.value = newLayout;
             showAddWidgetModal.value = false;
 
-            // Optional: Show success notification
-            console.log('Widget added to dashboard successfully!');
-
-            // Refresh data to include the new widget
+            // Refresh data
             await fetchData();
         } else {
-            console.error('Failed to add widget:', response.data);
+            console.error('❌ API returned success=false:', response.data);
+            alert('Server error: ' + (response.data.error || 'Unknown error'));
         }
     } catch (error) {
-        console.error('Error adding widget:', error);
+        console.error('❌ Exception in addWidget:', error);
 
-        // Handle specific error cases
         if (error.response?.status === 422) {
-            console.error('Validation error:', error.response.data.errors);
+            console.error('Validation Errors:', error.response.data.errors);
+            alert(
+                'Validation Error: ' +
+                    JSON.stringify(error.response.data.errors)
+            );
         } else if (error.response?.status === 404) {
-            console.error('Dashboard not found');
+            alert('Dashboard not found');
         } else {
-            console.error('Network or server error');
+            alert(
+                'Server Error: ' +
+                    (error.response?.data?.message ||
+                        error.response?.data?.error ||
+                        'Unknown')
+            );
         }
-
-        // Optional: Show error notification to user
-        alert('Failed to add widget. Please try again.');
     }
+};
+const validateLayoutItem = (item) => {
+    return (
+        item &&
+        typeof item === 'object' &&
+        typeof item.i === 'string' &&
+        typeof item.x === 'number' &&
+        typeof item.y === 'number' &&
+        typeof item.w === 'number' &&
+        typeof item.h === 'number'
+    );
 };
 
 // Also fix the removeWidget method if it's not implemented

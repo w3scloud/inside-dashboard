@@ -11,7 +11,6 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Str;
 use Inertia\Inertia;
 use Inertia\Response as InertiaResponse;
 
@@ -162,98 +161,76 @@ class DashboardController extends Controller
      */
     public function addWidget(Request $request, $id): JsonResponse
     {
-        $user = Auth::user();
-        $store = $user->stores()->active()->first();
-
-        if (! $store) {
-            return response()->json(['error' => 'No active store found'], 404);
-        }
-
-        $dashboard = $store->dashboards()->findOrFail($id);
-
-        $validated = $request->validate([
-            'widget_type' => 'required|string|exists:widget_templates,type',
-            'position' => 'required|array',
-            'position.x' => 'required|integer|min:0',
-            'position.y' => 'required|integer|min:0',
-            'position.w' => 'required|integer|min:1|max:12',
-            'position.h' => 'required|integer|min:1|max:12',
+        Log::info('AddWidget called', [
+            'dashboard_id' => $id,
+            'request_data' => $request->all(),
         ]);
 
         try {
-            DB::beginTransaction();
+            $user = Auth::user();
+            $store = $user->stores()->active()->first();
 
-            // Get widget template for defaults
-            $template = WidgetTemplate::where('type', $validated['widget_type'])->firstOrFail();
+            if (! $store) {
+                Log::error('No active store found');
 
-            // Generate unique widget ID
-            $widgetId = $validated['widget_type'].'_'.Str::random(8);
+                return response()->json(['error' => 'No active store found'], 404);
+            }
 
-            // Create widget record in database
-            $widget = Widget::create([
-                'dashboard_id' => $dashboard->id,
-                'title' => $template->name,
-                'type' => $template->type,
-                'chart_type' => $template->supported_chart_types[0] ?? 'line',
-                'data_source' => $template->available_data_sources[0] ?? 'sales_analytics',
-                'size' => [
-                    'w' => $validated['position']['w'],
-                    'h' => $validated['position']['h'],
-                ],
-                'position' => [
-                    'x' => $validated['position']['x'],
-                    'y' => $validated['position']['y'],
-                ],
-                'config' => $template->default_config ?? [],
-                'settings' => [],
-                'is_active' => true,
+            $dashboard = $store->dashboards()->findOrFail($id);
+            Log::info('Dashboard found', ['dashboard_id' => $dashboard->id]);
+
+            // Simplified validation without widget_templates table
+            $validated = $request->validate([
+                'widget_type' => 'required|string',
+                'position' => 'required|array',
+                'position.x' => 'required|integer|min:0',
+                'position.y' => 'required|integer|min:0',
+                'position.w' => 'required|integer|min:1|max:12',
+                'position.h' => 'required|integer|min:1|max:12',
             ]);
 
-            // Update dashboard layout
+            Log::info('Validation passed', $validated);
+
+            // Generate unique widget ID
+            $widgetId = $validated['widget_type'].'_'.time().'_'.rand(1000, 9999);
+
+            // Get current layout
             $currentLayout = $dashboard->layout ?? [];
 
+            // Create new layout item
             $newLayoutItem = [
-                'i' => $widgetId, // Use our generated ID
+                'i' => $widgetId,
                 'x' => $validated['position']['x'],
                 'y' => $validated['position']['y'],
                 'w' => $validated['position']['w'],
                 'h' => $validated['position']['h'],
-                'widget_id' => $widget->id, // Reference to actual widget record
             ];
 
+            // Add to layout
             $currentLayout[] = $newLayoutItem;
 
+            // Update dashboard
             $dashboard->update([
                 'layout' => $currentLayout,
             ]);
 
-            DB::commit();
-
-            Log::info('Widget added to dashboard', [
+            Log::info('Widget added successfully', [
                 'dashboard_id' => $id,
-                'widget_id' => $widget->id,
-                'widget_type' => $validated['widget_type'],
-                'position' => $validated['position'],
+                'widget_id' => $widgetId,
+                'layout_count' => count($currentLayout),
             ]);
 
             return response()->json([
                 'success' => true,
                 'message' => 'Widget added successfully',
                 'widget' => $newLayoutItem,
-                'widget_data' => [
-                    'id' => $widget->id,
-                    'title' => $widget->title,
-                    'type' => $widget->type,
-                ],
             ]);
 
         } catch (\Exception $e) {
-            DB::rollBack();
-
             Log::error('Failed to add widget', [
                 'dashboard_id' => $id,
-                'widget_type' => $validated['widget_type'],
                 'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
             ]);
 
             return response()->json([
@@ -277,26 +254,58 @@ class DashboardController extends Controller
 
         $dashboard = $store->dashboards()->findOrFail($id);
 
-        $validated = $request->validate([
-            'layout' => 'required|array',
-            'layout.*' => 'required|array',
-            'layout.*.i' => 'required|string',
-            'layout.*.x' => 'required|integer|min:0',
-            'layout.*.y' => 'required|integer|min:0',
-            'layout.*.w' => 'required|integer|min:1|max:12',
-            'layout.*.h' => 'required|integer|min:1|max:12',
+        // Enhanced validation with better error handling
+        $request->validate([
+            'layout' => 'required|array|min:1',
         ]);
+
+        $layout = $request->input('layout', []);
+
+        // Clean and validate each layout item
+        $cleanedLayout = [];
+
+        foreach ($layout as $index => $item) {
+            // Skip invalid items but log them
+            if (! is_array($item)) {
+                Log::warning("Layout item {$index} is not an array", ['item' => $item]);
+
+                continue;
+            }
+
+            // Ensure required fields exist with defaults
+            $cleanItem = [
+                'i' => $item['i'] ?? "widget_{$index}_".time(),
+                'x' => (int) ($item['x'] ?? 0),
+                'y' => (int) ($item['y'] ?? 0),
+                'w' => (int) ($item['w'] ?? 4),
+                'h' => (int) ($item['h'] ?? 4),
+            ];
+
+            // Keep additional properties
+            if (isset($item['widget_id'])) {
+                $cleanItem['widget_id'] = $item['widget_id'];
+            }
+
+            $cleanedLayout[] = $cleanItem;
+        }
+
+        if (empty($cleanedLayout)) {
+            return response()->json([
+                'success' => false,
+                'error' => 'No valid layout items provided',
+            ], 400);
+        }
 
         try {
             DB::beginTransaction();
 
             // Update dashboard layout
             $dashboard->update([
-                'layout' => $validated['layout'],
+                'layout' => $cleanedLayout,
             ]);
 
-            // Update individual widget positions and sizes if they exist
-            foreach ($validated['layout'] as $layoutItem) {
+            // Update individual widget positions if they exist
+            foreach ($cleanedLayout as $layoutItem) {
                 if (isset($layoutItem['widget_id'])) {
                     $widget = Widget::find($layoutItem['widget_id']);
                     if ($widget && $widget->dashboard_id === $dashboard->id) {
@@ -316,14 +325,17 @@ class DashboardController extends Controller
 
             DB::commit();
 
-            Log::info('Dashboard layout updated', [
+            Log::info('Dashboard layout updated successfully', [
                 'dashboard_id' => $id,
-                'layout_items' => count($validated['layout']),
+                'layout_items' => count($cleanedLayout),
+                'cleaned_items' => count($cleanedLayout),
+                'original_items' => count($layout),
             ]);
 
             return response()->json([
                 'success' => true,
                 'message' => 'Layout updated successfully',
+                'layout' => $cleanedLayout,
             ]);
 
         } catch (\Exception $e) {
@@ -332,6 +344,7 @@ class DashboardController extends Controller
             Log::error('Failed to update layout', [
                 'dashboard_id' => $id,
                 'error' => $e->getMessage(),
+                'layout_data' => $layout,
             ]);
 
             return response()->json([
