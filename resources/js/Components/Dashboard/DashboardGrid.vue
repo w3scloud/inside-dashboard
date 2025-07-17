@@ -1,136 +1,104 @@
-<script setup>
-import { ref, computed, onMounted, watch } from 'vue';
-
-const props = defineProps({
-    layout: {
-        type: Array,
-        required: true,
-    },
-    cols: {
-        type: Number,
-        default: 3,
-    },
-    rowHeight: {
-        type: Number,
-        default: 150,
-    },
-    margin: {
-        type: Array,
-        default: () => [20, 20],
-    },
-    isDraggable: {
-        type: Boolean,
-        default: true,
-    },
-    isResizable: {
-        type: Boolean,
-        default: true,
-    },
-});
-
-const emit = defineEmits(['layout-updated']);
-
-const gridContainer = ref(null);
-const containerWidth = ref(1200);
-
-const gridStyle = computed(() => ({
-    display: 'grid',
-    gridTemplateColumns: `repeat(${props.cols}, 1fr)`,
-    gap: `${props.margin[1]}px ${props.margin[0]}px`,
-    width: '100%',
-    minHeight: '400px',
-}));
-
-const getItemStyle = (item) => {
-    const minHeight = props.rowHeight * item.size.h;
-    const maxHeight = props.rowHeight * item.size.h + 50;
-
-    return {
-        gridColumn: `span ${Math.min(item.size.w, props.cols)}`,
-        gridRow: `span ${item.size.h}`,
-        minHeight: `${minHeight}px`,
-        maxHeight: `${maxHeight}px`,
-        height: `${minHeight}px`,
-        transition: 'all 0.2s ease',
-        overflow: 'hidden',
-    };
-};
-
-const updateContainerWidth = () => {
-    if (gridContainer.value) {
-        containerWidth.value = gridContainer.value.offsetWidth;
-    }
-};
-
-const handleResize = () => {
-    updateContainerWidth();
-};
-
-onMounted(() => {
-    updateContainerWidth();
-    window.addEventListener('resize', handleResize);
-});
-
-watch(
-    () => props.layout,
-    () => {
-        emit('layout-updated', props.layout);
-    },
-    { deep: true }
-);
-</script>
-
 <template>
-    <div ref="gridContainer" :style="gridStyle" class="dashboard-grid">
-        <div
-            v-for="item in layout"
-            :key="item.id"
-            :style="getItemStyle(item)"
-            class="grid-item"
-        >
-            <slot :item="item" />
+    <div class="dashboard-grid">
+        <!-- Simple Grid Layout -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
+            <!-- Sales Overview Widget -->
+            <div
+                v-if="hasWidget('sales_overview')"
+                class="lg:col-span-2 xl:col-span-2"
+            >
+                <SalesOverviewWidget
+                    :data="widgetData.sales_overview || {}"
+                    :loading="loading"
+                    @remove="$emit('remove-widget', 'sales_overview')"
+                />
+            </div>
+
+            <!-- Product Performance Widget -->
+            <div v-if="hasWidget('product_performance')">
+                <ProductPerformanceWidget
+                    :data="widgetData.product_performance || {}"
+                    :loading="loading"
+                    @remove="$emit('remove-widget', 'product_performance')"
+                />
+            </div>
+
+            <!-- Customer Analytics Widget -->
+            <div v-if="hasWidget('customer_analytics')">
+                <CustomerAnalyticsWidget
+                    :data="widgetData.customer_analytics || {}"
+                    :loading="loading"
+                    @remove="$emit('remove-widget', 'customer_analytics')"
+                />
+            </div>
+
+            <!-- Inventory Status Widget -->
+            <div v-if="hasWidget('inventory_status')">
+                <InventoryStatusWidget
+                    :data="widgetData.inventory_status || {}"
+                    :loading="loading"
+                    @remove="$emit('remove-widget', 'inventory_status')"
+                />
+            </div>
+
+            <!-- Performance Metrics Widget -->
+            <div v-if="hasWidget('performance_metrics')" class="lg:col-span-2">
+                <PerformanceMetricsWidget
+                    :data="widgetData.performance_metrics || {}"
+                    :loading="loading"
+                    @remove="$emit('remove-widget', 'performance_metrics')"
+                />
+            </div>
+
+            <!-- Data Sources Widget -->
+            <div v-if="hasWidget('data_sources')">
+                <DataSourcesWidget
+                    :data="widgetData.data_sources || {}"
+                    :loading="loading"
+                    @remove="$emit('remove-widget', 'data_sources')"
+                />
+            </div>
         </div>
     </div>
 </template>
 
+<script setup>
+import { computed } from 'vue';
+import SalesOverviewWidget from './Widgets/SalesOverviewWidget.vue';
+import ProductPerformanceWidget from './Widgets/ProductPerformanceWidget.vue';
+import CustomerAnalyticsWidget from './Widgets/CustomerAnalyticsWidget.vue';
+import InventoryStatusWidget from './Widgets/InventoryStatusWidget.vue';
+import PerformanceMetricsWidget from './Widgets/PerformanceMetricsWidget.vue';
+import DataSourcesWidget from './Widgets/DataSourcesWidget.vue';
+
+const props = defineProps({
+    layout: {
+        type: Array,
+        default: () => [],
+    },
+    widgetData: {
+        type: Object,
+        default: () => ({}),
+    },
+    availableWidgets: {
+        type: Array,
+        default: () => [],
+    },
+    loading: {
+        type: Boolean,
+        default: false,
+    },
+});
+
+const emit = defineEmits(['remove-widget', 'update:layout']);
+
+const hasWidget = (widgetType) => {
+    return props.layout.some((item) => item.i === widgetType);
+};
+</script>
+
 <style scoped>
 .dashboard-grid {
-    background: transparent;
-}
-
-.grid-item {
-    border-radius: 8px;
-    overflow: hidden;
-    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06);
-    transition: box-shadow 0.2s ease;
-    display: flex;
-    flex-direction: column;
-    min-height: 150px;
-    max-height: 500px;
-}
-
-.grid-item:hover {
-    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1),
-        0 2px 4px -1px rgba(0, 0, 0, 0.06);
-}
-
-@media (max-width: 1024px) {
-    .dashboard-grid {
-        grid-template-columns: repeat(2, 1fr);
-    }
-
-    .grid-item {
-        max-height: 400px;
-    }
-}
-
-@media (max-width: 640px) {
-    .dashboard-grid {
-        grid-template-columns: 1fr;
-    }
-
-    .grid-item {
-        max-height: 350px;
-    }
+    @apply w-full;
 }
 </style>

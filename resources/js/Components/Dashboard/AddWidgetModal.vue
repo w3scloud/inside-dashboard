@@ -1,206 +1,232 @@
+<template>
+    <TransitionRoot as="template" :show="show">
+        <Dialog as="div" class="relative z-50" @close="close">
+            <TransitionChild
+                as="template"
+                enter="ease-out duration-300"
+                enter-from="opacity-0"
+                enter-to="opacity-100"
+                leave="ease-in duration-200"
+                leave-from="opacity-100"
+                leave-to="opacity-0"
+            >
+                <div
+                    class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity"
+                />
+            </TransitionChild>
+
+            <div class="fixed inset-0 z-10 overflow-y-auto">
+                <div
+                    class="flex min-h-full items-end justify-center p-4 text-center sm:items-center sm:p-0"
+                >
+                    <TransitionChild
+                        as="template"
+                        enter="ease-out duration-300"
+                        enter-from="opacity-0 translate-y-4 sm:translate-y-0 sm:scale-95"
+                        enter-to="opacity-100 translate-y-0 sm:scale-100"
+                        leave="ease-in duration-200"
+                        leave-from="opacity-100 translate-y-0 sm:scale-100"
+                        leave-to="opacity-0 translate-y-4 sm:translate-y-0 sm:scale-95"
+                    >
+                        <DialogPanel
+                            class="relative transform overflow-hidden rounded-lg bg-white px-4 pb-4 pt-5 text-left shadow-xl transition-all sm:my-8 sm:w-full sm:max-w-lg sm:p-6"
+                        >
+                            <div>
+                                <div
+                                    class="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-indigo-100"
+                                >
+                                    <PlusIcon
+                                        class="h-6 w-6 text-indigo-600"
+                                        aria-hidden="true"
+                                    />
+                                </div>
+                                <div class="mt-3 text-center sm:mt-5">
+                                    <DialogTitle
+                                        as="h3"
+                                        class="text-base font-semibold leading-6 text-gray-900"
+                                    >
+                                        Add Widget to Dashboard
+                                    </DialogTitle>
+                                    <div class="mt-2">
+                                        <p class="text-sm text-gray-500">
+                                            Choose a widget to add to your
+                                            dashboard. You can configure it
+                                            after adding.
+                                        </p>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Widget Selection -->
+                            <div class="mt-6">
+                                <div
+                                    class="grid grid-cols-1 gap-4 sm:grid-cols-2"
+                                >
+                                    <div
+                                        v-for="widget in availableWidgets"
+                                        :key="widget.type"
+                                        @click="selectWidget(widget.type)"
+                                        :class="[
+                                            'relative rounded-lg border p-4 cursor-pointer hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2',
+                                            selectedWidget === widget.type
+                                                ? 'border-indigo-500 bg-indigo-50'
+                                                : 'border-gray-300',
+                                        ]"
+                                    >
+                                        <div class="flex items-center">
+                                            <div class="flex-shrink-0">
+                                                <component
+                                                    :is="
+                                                        getWidgetIcon(
+                                                            widget.icon
+                                                        )
+                                                    "
+                                                    class="h-6 w-6 text-gray-600"
+                                                />
+                                            </div>
+                                            <div class="ml-3 flex-1">
+                                                <h4
+                                                    class="text-sm font-medium text-gray-900"
+                                                >
+                                                    {{ widget.name }}
+                                                </h4>
+                                                <p
+                                                    class="text-xs text-gray-500 mt-1"
+                                                >
+                                                    {{ widget.description }}
+                                                </p>
+                                            </div>
+                                        </div>
+
+                                        <!-- Selection indicator -->
+                                        <div
+                                            v-if="
+                                                selectedWidget === widget.type
+                                            "
+                                            class="absolute top-2 right-2"
+                                        >
+                                            <CheckCircleIcon
+                                                class="h-5 w-5 text-indigo-600"
+                                            />
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Action buttons -->
+                            <div
+                                class="mt-6 sm:grid sm:grid-flow-row-dense sm:grid-cols-2 sm:gap-3"
+                            >
+                                <button
+                                    type="button"
+                                    :disabled="!selectedWidget"
+                                    @click="addWidget"
+                                    :class="[
+                                        'inline-flex w-full justify-center rounded-md px-3 py-2 text-sm font-semibold shadow-sm sm:col-start-2',
+                                        selectedWidget
+                                            ? 'bg-indigo-600 text-white hover:bg-indigo-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600'
+                                            : 'bg-gray-300 text-gray-500 cursor-not-allowed',
+                                    ]"
+                                >
+                                    Add Widget
+                                </button>
+                                <button
+                                    type="button"
+                                    @click="close"
+                                    class="mt-3 inline-flex w-full justify-center rounded-md bg-white px-3 py-2 text-sm font-semibold text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 hover:bg-gray-50 sm:col-start-1 sm:mt-0"
+                                >
+                                    Cancel
+                                </button>
+                            </div>
+                        </DialogPanel>
+                    </TransitionChild>
+                </div>
+            </div>
+        </Dialog>
+    </TransitionRoot>
+</template>
+
 <script setup>
-import { ref } from 'vue';
+import { ref, computed } from 'vue';
+import {
+    Dialog,
+    DialogPanel,
+    DialogTitle,
+    TransitionChild,
+    TransitionRoot,
+} from '@headlessui/vue';
+import {
+    PlusIcon,
+    CheckCircleIcon,
+    ChartBarIcon,
+    CubeIcon,
+    UsersIcon,
+    ArchiveBoxIcon,
+    ArrowTrendingUpIcon,
+    GlobeAltIcon,
+} from '@heroicons/vue/24/outline';
 
 const props = defineProps({
-    store: {
-        type: Object,
-        required: true,
+    show: {
+        type: Boolean,
+        default: false,
+    },
+    availableWidgets: {
+        type: Array,
+        default: () => [],
     },
 });
 
-const emit = defineEmits(['close', 'add']);
+const emit = defineEmits(['update:show', 'add-widget']);
 
-const widgetType = ref('kpi');
-const widgetTitle = ref('');
-const dataSource = ref('sales');
-const chartType = ref('line');
+const selectedWidget = ref(null);
 
-const widgetTypes = [
-    { value: 'kpi', label: 'KPI' },
-    { value: 'timeline', label: 'Timeline Chart' },
-    { value: 'bar_chart', label: 'Bar Chart' },
-    { value: 'pie_chart', label: 'Pie Chart' },
-    { value: 'table', label: 'Table' },
-];
+// Icon mapping
+const iconComponents = {
+    'chart-bar': ChartBarIcon,
+    cube: CubeIcon,
+    users: UsersIcon,
+    archive: ArchiveBoxIcon,
+    'trending-up': ArrowTrendingUpIcon,
+    globe: GlobeAltIcon,
+};
 
-const dataSources = [
-    { value: 'sales', label: 'Sales Data' },
-    { value: 'products', label: 'Products Data' },
-    { value: 'inventory', label: 'Inventory Data' },
-    { value: 'customers', label: 'Customers Data' },
-];
+const getWidgetIcon = (iconName) => {
+    return iconComponents[iconName] || ChartBarIcon;
+};
 
-const chartTypes = [
-    { value: 'line', label: 'Line Chart' },
-    { value: 'bar', label: 'Bar Chart' },
-    { value: 'pie', label: 'Pie Chart' },
-];
+const selectWidget = (widgetType) => {
+    selectedWidget.value = widgetType;
+};
 
-const handleSubmit = () => {
-    if (!widgetTitle.value) {
-        alert('Please enter a widget title');
-        return;
-    }
+const addWidget = () => {
+    if (!selectedWidget.value) return;
 
-    const widget = {
-        title: widgetTitle.value,
-        type: widgetType.value,
-        chart_type: chartType.value,
-        data_source: dataSource.value,
-        size: { w: 1, h: 2 },
-        position: { x: 0, y: 0 },
-        config: {},
-        filters: {},
+    const widget = props.availableWidgets.find(
+        (w) => w.type === selectedWidget.value
+    );
+
+    // Find a good position for the new widget
+    const position = {
+        x: 0,
+        y: 0,
+        w: widget?.default_size?.w || 4,
+        h: widget?.default_size?.h || 4,
     };
 
-    if (widgetType.value === 'kpi') {
-        widget.size = { w: 1, h: 1 };
-    } else if (
-        widgetType.value === 'timeline' ||
-        widgetType.value === 'bar_chart'
-    ) {
-        widget.size = { w: 2, h: 2 };
-    }
+    emit('add-widget', selectedWidget.value, position);
 
-    emit('add', widget);
+    // Reset and close
+    selectedWidget.value = null;
+    close();
+};
+
+const close = () => {
+    selectedWidget.value = null;
+    emit('update:show', false);
 };
 </script>
 
-<template>
-    <div
-        class="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50"
-    >
-        <div class="w-full max-w-md rounded-lg bg-white p-6 shadow-xl">
-            <div class="mb-4 flex items-center justify-between">
-                <h2 class="text-lg font-medium">Add Widget</h2>
-                <button
-                    class="text-gray-400 hover:text-gray-600"
-                    @click="$emit('close')"
-                >
-                    <svg
-                        xmlns="http://www.w3.org/2000/svg"
-                        class="h-6 w-6"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                        stroke="currentColor"
-                    >
-                        <path
-                            stroke-linecap="round"
-                            stroke-linejoin="round"
-                            stroke-width="2"
-                            d="M6 18L18 6M6 6l12 12"
-                        />
-                    </svg>
-                </button>
-            </div>
-
-            <form @submit.prevent="handleSubmit">
-                <div class="mb-4">
-                    <label
-                        for="widgetTitle"
-                        class="mb-1 block text-sm font-medium text-gray-700"
-                    >
-                        Widget Title
-                    </label>
-                    <input
-                        id="widgetTitle"
-                        v-model="widgetTitle"
-                        type="text"
-                        class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-                        placeholder="Enter widget title"
-                        required
-                    />
-                </div>
-
-                <div class="mb-4">
-                    <label
-                        for="widgetType"
-                        class="mb-1 block text-sm font-medium text-gray-700"
-                    >
-                        Widget Type
-                    </label>
-                    <select
-                        id="widgetType"
-                        v-model="widgetType"
-                        class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-                    >
-                        <option
-                            v-for="type in widgetTypes"
-                            :key="type.value"
-                            :value="type.value"
-                        >
-                            {{ type.label }}
-                        </option>
-                    </select>
-                </div>
-
-                <div class="mb-4">
-                    <label
-                        for="dataSource"
-                        class="mb-1 block text-sm font-medium text-gray-700"
-                    >
-                        Data Source
-                    </label>
-                    <select
-                        id="dataSource"
-                        v-model="dataSource"
-                        class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-                    >
-                        <option
-                            v-for="source in dataSources"
-                            :key="source.value"
-                            :value="source.value"
-                        >
-                            {{ source.label }}
-                        </option>
-                    </select>
-                </div>
-
-                <div
-                    v-if="
-                        widgetType === 'timeline' ||
-                        widgetType === 'bar_chart' ||
-                        widgetType === 'pie_chart'
-                    "
-                    class="mb-4"
-                >
-                    <label
-                        for="chartType"
-                        class="mb-1 block text-sm font-medium text-gray-700"
-                    >
-                        Chart Type
-                    </label>
-                    <select
-                        id="chartType"
-                        v-model="chartType"
-                        class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-                    >
-                        <option
-                            v-for="type in chartTypes"
-                            :key="type.value"
-                            :value="type.value"
-                        >
-                            {{ type.label }}
-                        </option>
-                    </select>
-                </div>
-
-                <div class="mt-6 flex justify-end space-x-3">
-                    <button
-                        type="button"
-                        class="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
-                        @click="$emit('close')"
-                    >
-                        Cancel
-                    </button>
-                    <button
-                        type="submit"
-                        class="rounded-md border border-transparent bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
-                    >
-                        Add Widget
-                    </button>
-                </div>
-            </form>
-        </div>
-    </div>
-</template>
+<style scoped>
+/* Additional styles if needed */
+</style>

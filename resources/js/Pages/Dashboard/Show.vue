@@ -21,7 +21,7 @@ const widgetData = ref({});
 const showAddWidgetModal = ref(false);
 const refreshInterval = ref(null);
 
-// FIX: Initialize dateRange with default values
+// Initialize dateRange with default values
 const dateRange = ref({
     start: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
         .toISOString()
@@ -41,8 +41,8 @@ const layout = computed({
 
 // Methods
 const fetchData = async () => {
-    if (!props.dashboard?.id || !props.store?.id) {
-        console.error('Missing dashboard or store ID');
+    if (!props.store?.id) {
+        console.error('Missing store ID');
         return;
     }
 
@@ -50,46 +50,102 @@ const fetchData = async () => {
 
     try {
         console.log('Fetching dashboard data...', {
-            dashboard_id: props.dashboard.id,
             store_id: props.store.id,
             date_range: dateRange.value,
         });
 
-        const response = await axios.get(
-            `/dashboard/${props.dashboard.id}/fetch-data`,
-            {
-                params: {
-                    start_date: dateRange.value.start,
-                    end_date: dateRange.value.end,
-                    store_id: props.store.id,
-                },
-            }
-        );
+        // USE YOUR EXISTING WORKING API ENDPOINT
+        const response = await axios.get('/api/analytics/dashboard', {
+            params: {
+                store_id: props.store.id,
+                start_date: dateRange.value.start,
+                end_date: dateRange.value.end,
+            },
+        });
 
-        console.log('Dashboard data response:', response.data);
+        console.log('API Response:', response.data);
 
         if (response.data.success) {
-            widgetData.value = response.data.data || {};
+            // Transform the API response to match widget expectations
+            const apiData = response.data.data;
 
-            // Log summary for debugging
-            console.log('Dashboard summary:', response.data.summary);
+            // Map API data to widget data structure
+            widgetData.value = {
+                // Sales Overview Widget
+                sales_overview: {
+                    total_revenue:
+                        apiData.sales_analytics?.summary?.total_sales || 0,
+                    total_orders:
+                        apiData.sales_analytics?.summary?.total_orders || 0,
+                    average_order_value:
+                        apiData.sales_analytics?.summary?.average_order_value ||
+                        0,
+                    growth_rate:
+                        apiData.sales_analytics?.summary?.growth_rate || 0,
+                    daily_sales:
+                        apiData.sales_analytics?.trends?.daily_sales || {},
+                },
+
+                // Product Performance Widget
+                product_performance: {
+                    top_products: apiData.product_analytics?.top_products || [],
+                    total_products:
+                        apiData.product_analytics?.summary?.total_products || 0,
+                    performance_metrics:
+                        apiData.product_analytics?.performance_metrics || {},
+                },
+
+                // Customer Analytics Widget
+                customer_analytics: {
+                    total_customers:
+                        apiData.customer_analytics?.summary?.total_customers ||
+                        0,
+                    new_customers:
+                        apiData.customer_analytics?.summary
+                            ?.new_customers_30d || 0,
+                    returning_customers:
+                        apiData.customer_analytics?.summary
+                            ?.returning_customers || 0,
+                    segments: apiData.customer_analytics?.segments || [],
+                },
+
+                // Inventory Widget
+                inventory_status: {
+                    total_products:
+                        apiData.inventory_analytics?.summary?.total_products ||
+                        0,
+                    in_stock:
+                        apiData.inventory_analytics?.inventory_status
+                            ?.in_stock || 0,
+                    low_stock:
+                        apiData.inventory_analytics?.inventory_status
+                            ?.low_stock || 0,
+                    out_of_stock:
+                        apiData.inventory_analytics?.inventory_status
+                            ?.out_of_stock || 0,
+                    low_stock_products:
+                        apiData.inventory_analytics?.low_stock_products || [],
+                },
+
+                // Performance Metrics Widget
+                performance_metrics: apiData.performance_metrics || {},
+
+                // Data Sources Status Widget
+                data_sources: apiData.data_sources || {},
+            };
+
+            console.log('Transformed widget data:', widgetData.value);
         } else {
-            console.error('Dashboard API error:', response.data.message);
-            // Show error to user
-            alert('Failed to load dashboard data: ' + response.data.message);
+            console.error('API returned error:', response.data);
         }
     } catch (error) {
-        console.error('Error fetching dashboard data:', error);
+        console.error('Error fetching data:', error);
 
-        // More detailed error logging
-        if (error.response) {
-            console.error('Error response:', error.response.data);
-            alert(
-                'Server error: ' +
-                    (error.response.data.message || error.message)
-            );
-        } else {
-            alert('Network error: ' + error.message);
+        // Show user-friendly error message
+        if (error.response?.status === 404) {
+            console.error('Store not found or no active store');
+        } else if (error.response?.status === 500) {
+            console.error('Server error:', error.response.data);
         }
     } finally {
         loading.value = false;
@@ -98,19 +154,23 @@ const fetchData = async () => {
 
 const handleDateRangeChange = (newDateRange) => {
     console.log('Date range changed:', newDateRange);
-
-    // FIX: Ensure proper date format
     dateRange.value = {
-        start: newDateRange.start || dateRange.value.start,
-        end: newDateRange.end || dateRange.value.end,
+        start: newDateRange.start,
+        end: newDateRange.end,
     };
+    // fetchData will be called automatically via watcher
+};
 
-    // Fetch new data
+const refreshData = () => {
+    console.log('Refreshing data...');
     fetchData();
 };
 
 const updateLayout = async (newLayout) => {
     try {
+        console.log('Updating layout:', newLayout);
+
+        // Use the existing route from your web.php
         await axios.put(`/dashboard/${props.dashboard.id}/layout`, {
             layout: newLayout,
         });
@@ -121,88 +181,124 @@ const updateLayout = async (newLayout) => {
     }
 };
 
-const addWidget = async (widgetConfig) => {
-    try {
-        const response = await axios.post(
-            `/dashboard/${props.dashboard.id}/widgets`,
-            widgetConfig
-        );
+const addWidget = async (widgetType, position) => {
+    const newWidget = {
+        i: widgetType,
+        x: position?.x || 0,
+        y: position?.y || 0,
+        w:
+            props.availableWidgets.find((w) => w.type === widgetType)
+                ?.default_size?.w || 4,
+        h:
+            props.availableWidgets.find((w) => w.type === widgetType)
+                ?.default_size?.h || 4,
+    };
 
-        if (response.data.success) {
-            // Refresh dashboard to show new widget
-            window.location.reload();
-        }
-    } catch (error) {
-        console.error('Error adding widget:', error);
-    }
+    const newLayout = [...layout.value, newWidget];
+    layout.value = newLayout;
+
+    showAddWidgetModal.value = false;
+
+    // Refresh data to populate the new widget
+    await fetchData();
 };
 
-const updateWidget = async (widgetId, updates) => {
-    try {
-        await axios.put(
-            `/dashboard/${props.dashboard.id}/widgets/${widgetId}`,
-            updates
-        );
-
-        // Refresh data
-        fetchData();
-    } catch (error) {
-        console.error('Error updating widget:', error);
-    }
+const removeWidget = (widgetId) => {
+    console.log('Removing widget:', widgetId);
+    layout.value = layout.value.filter((item) => item.i !== widgetId);
+    delete widgetData.value[widgetId];
 };
 
-const removeWidget = async (widgetId) => {
-    try {
-        await axios.delete(
-            `/dashboard/${props.dashboard.id}/widgets/${widgetId}`
-        );
+// Computed properties for easy access to specific data
+const salesMetrics = computed(() => {
+    const sales = widgetData.value.sales_overview || {};
+    return {
+        totalRevenue: sales.total_revenue || 0,
+        totalOrders: sales.total_orders || 0,
+        averageOrderValue: sales.average_order_value || 0,
+        growthRate: sales.growth_rate || 0,
+    };
+});
 
-        // Refresh dashboard
-        window.location.reload();
-    } catch (error) {
-        console.error('Error removing widget:', error);
-    }
-};
+const productMetrics = computed(() => {
+    const products = widgetData.value.product_performance || {};
+    return {
+        totalProducts: products.total_products || 0,
+        topProducts: products.top_products || [],
+    };
+});
 
-// Auto-refresh functionality
-const startAutoRefresh = (interval) => {
-    if (refreshInterval.value) {
-        clearInterval(refreshInterval.value);
-    }
+const customerMetrics = computed(() => {
+    const customers = widgetData.value.customer_analytics || {};
+    return {
+        totalCustomers: customers.total_customers || 0,
+        newCustomers: customers.new_customers || 0,
+        returningCustomers: customers.returning_customers || 0,
+    };
+});
 
-    if (interval > 0) {
-        refreshInterval.value = setInterval(fetchData, interval * 1000);
-        console.log(`Auto-refresh started: ${interval} seconds`);
-    }
-};
+const inventoryMetrics = computed(() => {
+    const inventory = widgetData.value.inventory_status || {};
+    return {
+        totalProducts: inventory.total_products || 0,
+        inStock: inventory.in_stock || 0,
+        lowStock: inventory.low_stock || 0,
+        outOfStock: inventory.out_of_stock || 0,
+    };
+});
 
-// Watchers
-watch(
-    () => props.dashboard?.settings?.refresh_interval,
-    (interval) => {
-        startAutoRefresh(interval || 0);
-    },
-    { immediate: true }
-);
-
-// Lifecycle
+// Lifecycle hooks
 onMounted(() => {
-    console.log('Dashboard component mounted', {
+    console.log('Dashboard mounted:', {
         dashboard: props.dashboard,
         store: props.store,
-        initial_date_range: dateRange.value,
+        availableWidgets: props.availableWidgets,
     });
 
     // Initial data fetch
     fetchData();
+
+    // Set up auto-refresh every 5 minutes (optional)
+    refreshInterval.value = setInterval(() => {
+        fetchData();
+    }, 5 * 60 * 1000);
 });
 
-// Cleanup on unmount
 onUnmounted(() => {
     if (refreshInterval.value) {
         clearInterval(refreshInterval.value);
     }
 });
+
+// Watch for date range changes
+watch(
+    dateRange,
+    (newDateRange, oldDateRange) => {
+        console.log('Date range watcher triggered:', {
+            newDateRange,
+            oldDateRange,
+        });
+        if (
+            newDateRange.start !== oldDateRange.start ||
+            newDateRange.end !== oldDateRange.end
+        ) {
+            fetchData();
+        }
+    },
+    { deep: true }
+);
+
+// Watch for store changes
+watch(
+    () => props.store,
+    (newStore, oldStore) => {
+        console.log('Store changed:', { newStore, oldStore });
+        if (newStore?.id !== oldStore?.id) {
+            fetchData();
+        }
+    },
+    { deep: true }
+);
 </script>
 
 <template>
@@ -211,9 +307,19 @@ onUnmounted(() => {
     <AuthenticatedLayout>
         <template #header>
             <div class="flex items-center justify-between">
-                <h2 class="text-xl font-semibold leading-tight text-gray-800">
-                    {{ dashboard?.name || 'Dashboard' }}
-                </h2>
+                <div>
+                    <h2
+                        class="text-xl font-semibold leading-tight text-gray-800"
+                    >
+                        {{ dashboard?.name || 'Dashboard' }}
+                    </h2>
+                    <p
+                        v-if="dashboard?.description"
+                        class="text-sm text-gray-600 mt-1"
+                    >
+                        {{ dashboard.description }}
+                    </p>
+                </div>
 
                 <div class="flex items-center space-x-4">
                     <DateRangePicker
@@ -223,9 +329,44 @@ onUnmounted(() => {
                     />
 
                     <button
-                        class="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500"
+                        @click="refreshData"
+                        :disabled="loading"
+                        class="inline-flex items-center px-3 py-2 border border-gray-300 shadow-sm text-sm leading-4 font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50"
+                    >
+                        <svg
+                            :class="{ 'animate-spin': loading }"
+                            class="w-4 h-4 mr-2"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                        >
+                            <path
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                stroke-width="2"
+                                d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                            />
+                        </svg>
+                        Refresh
+                    </button>
+
+                    <button
+                        class="inline-flex items-center px-4 py-2 bg-indigo-600 border border-transparent rounded-md font-semibold text-xs text-white uppercase tracking-widest hover:bg-indigo-500 focus:outline-none focus:border-indigo-700 focus:ring focus:ring-indigo-200 active:bg-indigo-600 disabled:opacity-25 transition"
                         @click="showAddWidgetModal = true"
                     >
+                        <svg
+                            class="w-4 h-4 mr-2"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                        >
+                            <path
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                stroke-width="2"
+                                d="M12 4v16m8-8H4"
+                            />
+                        </svg>
                         Add Widget
                     </button>
                 </div>
@@ -236,11 +377,14 @@ onUnmounted(() => {
             <div class="mx-auto max-w-7xl sm:px-6 lg:px-8">
                 <!-- Loading State -->
                 <div
-                    v-if="loading && layout.length === 0"
+                    v-if="loading && Object.keys(widgetData).length === 0"
                     class="flex justify-center py-20"
                 >
                     <div class="text-center">
-                        <div class="text-3xl font-semibold">
+                        <div
+                            class="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mx-auto"
+                        ></div>
+                        <div class="text-lg font-semibold mt-4 text-gray-700">
                             Loading dashboard...
                         </div>
                         <p class="mt-2 text-gray-600">
@@ -249,79 +393,232 @@ onUnmounted(() => {
                     </div>
                 </div>
 
-                <!-- Debug Info (remove in production) -->
-                <div
-                    v-if="$page.props.app?.debug"
-                    class="mb-4 p-4 bg-gray-100 rounded"
-                >
-                    <details>
-                        <summary class="cursor-pointer font-semibold">
-                            Debug Info
-                        </summary>
-                        <pre class="text-xs mt-2">
-Dashboard: {{ dashboard }}</pre
-                        >
-                        <pre class="text-xs mt-2">Store: {{ store }}</pre>
-                        <pre class="text-xs mt-2">
-Date Range: {{ dateRange }}</pre
-                        >
-                        <pre class="text-xs mt-2">
-Widget Data Keys: {{ Object.keys(widgetData) }}</pre
-                        >
-                    </details>
-                </div>
+                <!-- Dashboard Content -->
+                <div v-else>
+                    <!-- Key Metrics Summary Cards -->
+                    <div
+                        class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8"
+                    >
+                        <!-- Total Revenue -->
+                        <div class="bg-white overflow-hidden shadow rounded-lg">
+                            <div class="p-5">
+                                <div class="flex items-center">
+                                    <div class="flex-shrink-0">
+                                        <svg
+                                            class="h-6 w-6 text-gray-400"
+                                            fill="none"
+                                            stroke="currentColor"
+                                            viewBox="0 0 24 24"
+                                        >
+                                            <path
+                                                stroke-linecap="round"
+                                                stroke-linejoin="round"
+                                                stroke-width="2"
+                                                d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1"
+                                            />
+                                        </svg>
+                                    </div>
+                                    <div class="ml-5 w-0 flex-1">
+                                        <dl>
+                                            <dt
+                                                class="text-sm font-medium text-gray-500 truncate"
+                                            >
+                                                Total Revenue
+                                            </dt>
+                                            <dd
+                                                class="text-lg font-medium text-gray-900"
+                                            >
+                                                ${{
+                                                    salesMetrics.totalRevenue.toLocaleString()
+                                                }}
+                                            </dd>
+                                        </dl>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
 
-                <!-- Dashboard Grid -->
-                <DashboardGrid
-                    v-if="layout.length > 0"
-                    :layout="layout"
-                    @layout-updated="updateLayout"
-                >
-                    <template #default="{ item }">
-                        <Widget
-                            :widget="item"
-                            :data="widgetData[item.id]"
-                            :loading="loading"
-                            @update="updateWidget(item.id, $event)"
-                            @remove="removeWidget(item.id)"
-                        />
-                    </template>
-                </DashboardGrid>
+                        <!-- Total Orders -->
+                        <div class="bg-white overflow-hidden shadow rounded-lg">
+                            <div class="p-5">
+                                <div class="flex items-center">
+                                    <div class="flex-shrink-0">
+                                        <svg
+                                            class="h-6 w-6 text-gray-400"
+                                            fill="none"
+                                            stroke="currentColor"
+                                            viewBox="0 0 24 24"
+                                        >
+                                            <path
+                                                stroke-linecap="round"
+                                                stroke-linejoin="round"
+                                                stroke-width="2"
+                                                d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z"
+                                            />
+                                        </svg>
+                                    </div>
+                                    <div class="ml-5 w-0 flex-1">
+                                        <dl>
+                                            <dt
+                                                class="text-sm font-medium text-gray-500 truncate"
+                                            >
+                                                Total Orders
+                                            </dt>
+                                            <dd
+                                                class="text-lg font-medium text-gray-900"
+                                            >
+                                                {{
+                                                    salesMetrics.totalOrders.toLocaleString()
+                                                }}
+                                            </dd>
+                                        </dl>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
 
-                <!-- Empty State -->
-                <div v-else-if="!loading" class="text-center py-20">
-                    <div class="text-gray-500">
-                        <h3 class="text-lg font-medium">
-                            No widgets configured
+                        <!-- Average Order Value -->
+                        <div class="bg-white overflow-hidden shadow rounded-lg">
+                            <div class="p-5">
+                                <div class="flex items-center">
+                                    <div class="flex-shrink-0">
+                                        <svg
+                                            class="h-6 w-6 text-gray-400"
+                                            fill="none"
+                                            stroke="currentColor"
+                                            viewBox="0 0 24 24"
+                                        >
+                                            <path
+                                                stroke-linecap="round"
+                                                stroke-linejoin="round"
+                                                stroke-width="2"
+                                                d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"
+                                            />
+                                        </svg>
+                                    </div>
+                                    <div class="ml-5 w-0 flex-1">
+                                        <dl>
+                                            <dt
+                                                class="text-sm font-medium text-gray-500 truncate"
+                                            >
+                                                Avg Order Value
+                                            </dt>
+                                            <dd
+                                                class="text-lg font-medium text-gray-900"
+                                            >
+                                                ${{
+                                                    salesMetrics.averageOrderValue.toFixed(
+                                                        2
+                                                    )
+                                                }}
+                                            </dd>
+                                        </dl>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Total Customers -->
+                        <div class="bg-white overflow-hidden shadow rounded-lg">
+                            <div class="p-5">
+                                <div class="flex items-center">
+                                    <div class="flex-shrink-0">
+                                        <svg
+                                            class="h-6 w-6 text-gray-400"
+                                            fill="none"
+                                            stroke="currentColor"
+                                            viewBox="0 0 24 24"
+                                        >
+                                            <path
+                                                stroke-linecap="round"
+                                                stroke-linejoin="round"
+                                                stroke-width="2"
+                                                d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197m13.5-9a2.5 2.5 0 11-5 0 2.5 2.5 0 015 0z"
+                                            />
+                                        </svg>
+                                    </div>
+                                    <div class="ml-5 w-0 flex-1">
+                                        <dl>
+                                            <dt
+                                                class="text-sm font-medium text-gray-500 truncate"
+                                            >
+                                                Total Customers
+                                            </dt>
+                                            <dd
+                                                class="text-lg font-medium text-gray-900"
+                                            >
+                                                {{
+                                                    customerMetrics.totalCustomers.toLocaleString()
+                                                }}
+                                            </dd>
+                                        </dl>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Widget Grid -->
+                    <DashboardGrid
+                        v-if="layout.length > 0"
+                        v-model:layout="layout"
+                        :widget-data="widgetData"
+                        :available-widgets="availableWidgets"
+                        @remove-widget="removeWidget"
+                    />
+
+                    <!-- Empty State -->
+                    <div v-else class="text-center py-12">
+                        <svg
+                            class="mx-auto h-12 w-12 text-gray-400"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                        >
+                            <path
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                stroke-width="2"
+                                d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"
+                            />
+                        </svg>
+                        <h3 class="mt-2 text-sm font-medium text-gray-900">
+                            No widgets
                         </h3>
-                        <p class="mt-2">
-                            Add your first widget to get started.
+                        <p class="mt-1 text-sm text-gray-500">
+                            Get started by adding a widget to your dashboard.
                         </p>
-                        <button
-                            class="mt-4 rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500"
-                            @click="showAddWidgetModal = true"
-                        >
-                            Add Your First Widget
-                        </button>
+                        <div class="mt-6">
+                            <button
+                                @click="showAddWidgetModal = true"
+                                class="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                            >
+                                <svg
+                                    class="-ml-1 mr-2 h-5 w-5"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    viewBox="0 0 24 24"
+                                >
+                                    <path
+                                        stroke-linecap="round"
+                                        stroke-linejoin="round"
+                                        stroke-width="2"
+                                        d="M12 4v16m8-8H4"
+                                    />
+                                </svg>
+                                Add Widget
+                            </button>
+                        </div>
                     </div>
                 </div>
-
-                <!-- Add Widget Modal -->
-                <AddWidgetModal
-                    v-if="showAddWidgetModal"
-                    :store="store"
-                    :available-widgets="availableWidgets"
-                    @close="showAddWidgetModal = false"
-                    @add="addWidget"
-                />
             </div>
         </div>
+
+        <!-- Add Widget Modal -->
+        <AddWidgetModal
+            v-model:show="showAddWidgetModal"
+            :available-widgets="availableWidgets"
+            @add-widget="addWidget"
+        />
     </AuthenticatedLayout>
 </template>
-
-<style scoped>
-/* Add any component-specific styles here */
-.dashboard-loading {
-    min-height: 400px;
-}
-</style>
