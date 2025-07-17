@@ -182,31 +182,100 @@ const updateLayout = async (newLayout) => {
 };
 
 const addWidget = async (widgetType, position) => {
-    const newWidget = {
-        i: widgetType,
-        x: position?.x || 0,
-        y: position?.y || 0,
-        w:
-            props.availableWidgets.find((w) => w.type === widgetType)
-                ?.default_size?.w || 4,
-        h:
-            props.availableWidgets.find((w) => w.type === widgetType)
-                ?.default_size?.h || 4,
-    };
+    try {
+        console.log('Adding widget:', { widgetType, position });
 
-    const newLayout = [...layout.value, newWidget];
-    layout.value = newLayout;
+        // Create widget object matching your backend expectations
+        const widgetData = {
+            widget_type: widgetType,
+            position: {
+                x: position?.x || 0,
+                y: position?.y || 0,
+                w:
+                    props.availableWidgets.find((w) => w.type === widgetType)
+                        ?.default_size?.w || 4,
+                h:
+                    props.availableWidgets.find((w) => w.type === widgetType)
+                        ?.default_size?.h || 4,
+            },
+        };
 
-    showAddWidgetModal.value = false;
+        // Make API call to add widget to dashboard
+        const response = await axios.post(
+            `/dashboard/${props.dashboard.id}/widget`,
+            widgetData
+        );
 
-    // Refresh data to populate the new widget
-    await fetchData();
+        if (response.data.success) {
+            console.log('Widget added successfully:', response.data.widget);
+
+            // Update local layout with the new widget
+            const newWidget = {
+                i: widgetType,
+                x: widgetData.position.x,
+                y: widgetData.position.y,
+                w: widgetData.position.w,
+                h: widgetData.position.h,
+            };
+
+            const newLayout = [...layout.value, newWidget];
+            layout.value = newLayout;
+
+            // Close the modal
+            showAddWidgetModal.value = false;
+
+            // Optional: Show success notification
+            console.log('Widget added to dashboard successfully!');
+
+            // Refresh data to include the new widget
+            await fetchData();
+        } else {
+            console.error('Failed to add widget:', response.data);
+        }
+    } catch (error) {
+        console.error('Error adding widget:', error);
+
+        // Handle specific error cases
+        if (error.response?.status === 422) {
+            console.error('Validation error:', error.response.data.errors);
+        } else if (error.response?.status === 404) {
+            console.error('Dashboard not found');
+        } else {
+            console.error('Network or server error');
+        }
+
+        // Optional: Show error notification to user
+        alert('Failed to add widget. Please try again.');
+    }
 };
 
-const removeWidget = (widgetId) => {
-    console.log('Removing widget:', widgetId);
-    layout.value = layout.value.filter((item) => item.i !== widgetId);
-    delete widgetData.value[widgetId];
+// Also fix the removeWidget method if it's not implemented
+const removeWidget = async (widgetId) => {
+    try {
+        console.log('Removing widget:', widgetId);
+
+        // Make API call to remove widget
+        const response = await axios.delete(
+            `/dashboard/${props.dashboard.id}/widget/${widgetId}`
+        );
+
+        if (response.data.success) {
+            console.log('Widget removed successfully');
+
+            // Update local layout by removing the widget
+            const newLayout = layout.value.filter(
+                (widget) => widget.i !== widgetId
+            );
+            layout.value = newLayout;
+
+            console.log('Widget removed from dashboard successfully!');
+        } else {
+            console.error('Failed to remove widget:', response.data);
+        }
+    } catch (error) {
+        console.error('Error removing widget:', error);
+        alert('Failed to remove widget. Please try again.');
+    }
 };
 
 // Computed properties for easy access to specific data

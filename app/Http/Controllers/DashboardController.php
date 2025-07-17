@@ -3,12 +3,15 @@
 namespace App\Http\Controllers;
 
 use App\Models\Dashboard;
+use App\Models\WidgetTemplate;
 use App\Services\GraphQLAnalyticsService;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 use Inertia\Inertia;
 use Inertia\Response as InertiaResponse;
 
@@ -53,56 +56,43 @@ class DashboardController extends Controller
     /**
      * Show the specified dashboard.
      */
-    public function show($id): InertiaResponse
+    public function show($id)
     {
         $user = Auth::user();
         $store = $user->stores()->active()->first();
 
         if (! $store) {
-            return redirect()->route('dashboard')
-                ->with('error', 'No active store found.');
+            return redirect()->route('shopify.login')
+                ->with('error', 'No active store found. Please connect your Shopify store.');
         }
 
-        $dashboard = $store->dashboards()->findOrFail($id);
+        $dashboard = $store->dashboards()->with('widgets')->findOrFail($id);
 
         // Update last viewed timestamp
-        $dashboard->update(['last_viewed_at' => now()]);
+        $dashboard->updateLastViewed();
 
-        // Get all dashboards for navigation
-        $allDashboards = $store->dashboards()
-            ->select('id', 'name', 'description', 'is_default', 'last_viewed_at', 'created_at')
-            ->orderBy('is_default', 'desc')
-            ->orderBy('last_viewed_at', 'desc')
+        // Get available widget templates
+        $availableWidgets = WidgetTemplate::where('is_active', true)
+            ->orderBy('name')
             ->get()
-            ->map(function ($d) {
+            ->map(function ($template) {
                 return [
-                    'id' => $d->id,
-                    'name' => $d->name,
-                    'description' => $d->description,
-                    'is_default' => $d->is_default,
-                    'last_viewed_at' => $d->last_viewed_at?->diffForHumans(),
-                    'created_at' => $d->created_at->format('M j, Y'),
+                    'type' => $template->type,
+                    'name' => $template->name,
+                    'description' => $template->description,
+                    'icon' => $template->icon,
+                    'default_size' => $template->default_size,
+                    'min_size' => $template->min_size,
+                    'max_size' => $template->max_size,
+                    'supported_chart_types' => $template->supported_chart_types,
                 ];
-            });
+            })
+            ->toArray();
 
         return Inertia::render('Dashboard/Show', [
-            'dashboard' => [
-                'id' => $dashboard->id,
-                'name' => $dashboard->name,
-                'description' => $dashboard->description,
-                'is_default' => $dashboard->is_default,
-                'layout' => $dashboard->layout ?? [],
-                'settings' => $dashboard->settings ?? [],
-                'last_viewed_at' => $dashboard->last_viewed_at?->diffForHumans(),
-                'created_at' => $dashboard->created_at->format('M j, Y'),
-            ],
-            'store' => [
-                'id' => $store->id,
-                'name' => $store->name,
-                'domain' => $store->shop_domain,
-            ],
-            'allDashboards' => $allDashboards,
-            'availableWidgets' => $this->getAvailableWidgets(),
+            'dashboard' => $dashboard,
+            'store' => $store,
+            'availableWidgets' => $availableWidgets,
         ]);
     }
 
@@ -168,7 +158,113 @@ class DashboardController extends Controller
     }
 
     /**
-     * Update dashboard layout (for Vue.js grid layout)
+     * Add a widget to the dashboard - FIXED VERSION
+     */
+    public function addWidget(Request $request, $id): JsonResponse
+    {
+        $user = Auth::user();
+        $store = $user->stores()->active()->first();
+
+        if (! $store) {
+            return response()->json(['error' => 'No active store found'], 404);
+        }
+
+        $dashboard = $store->dashboards()->findOrFail($id);
+
+        $validated = $request->validate([
+            'widget_type' => 'required|string|exists:widget_templates,type',
+            'position' => 'required|array',
+            'position.x' => 'required|integer|min:0',
+            'position.y' => 'required|integer|min:0',
+            'position.w' => 'required|integer|min:1|max:12',
+            'position.h' => 'required|integer|min:1|max:12',
+        ]);
+
+        try {
+            DB::beginTransaction();
+
+            // Get widget template for defaults
+            $template = WidgetTemplate::where('type', $validated['widget_type'])->firstOrFail();
+
+            // Generate unique widget ID
+            $widgetId = $validated['widget_type'].'_'.Str::random(8);
+
+            // Create widget record in database
+            $widget = Widget::create([
+                'dashboard_id' => $dashboard->id,
+                'title' => $template->name,
+                'type' => $template->type,
+                'chart_type' => $template->supported_chart_types[0] ?? 'line',
+                'data_source' => $template->available_data_sources[0] ?? 'sales_analytics',
+                'size' => [
+                    'w' => $validated['position']['w'],
+                    'h' => $validated['position']['h'],
+                ],
+                'position' => [
+                    'x' => $validated['position']['x'],
+                    'y' => $validated['position']['y'],
+                ],
+                'config' => $template->default_config ?? [],
+                'settings' => [],
+                'is_active' => true,
+            ]);
+
+            // Update dashboard layout
+            $currentLayout = $dashboard->layout ?? [];
+
+            $newLayoutItem = [
+                'i' => $widgetId, // Use our generated ID
+                'x' => $validated['position']['x'],
+                'y' => $validated['position']['y'],
+                'w' => $validated['position']['w'],
+                'h' => $validated['position']['h'],
+                'widget_id' => $widget->id, // Reference to actual widget record
+            ];
+
+            $currentLayout[] = $newLayoutItem;
+
+            $dashboard->update([
+                'layout' => $currentLayout,
+            ]);
+
+            DB::commit();
+
+            Log::info('Widget added to dashboard', [
+                'dashboard_id' => $id,
+                'widget_id' => $widget->id,
+                'widget_type' => $validated['widget_type'],
+                'position' => $validated['position'],
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Widget added successfully',
+                'widget' => $newLayoutItem,
+                'widget_data' => [
+                    'id' => $widget->id,
+                    'title' => $widget->title,
+                    'type' => $widget->type,
+                ],
+            ]);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+
+            Log::error('Failed to add widget', [
+                'dashboard_id' => $id,
+                'widget_type' => $validated['widget_type'],
+                'error' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'error' => 'Failed to add widget: '.$e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Update dashboard layout - IMPROVED VERSION
      */
     public function updateLayout(Request $request, $id): JsonResponse
     {
@@ -187,79 +283,66 @@ class DashboardController extends Controller
             'layout.*.i' => 'required|string',
             'layout.*.x' => 'required|integer|min:0',
             'layout.*.y' => 'required|integer|min:0',
-            'layout.*.w' => 'required|integer|min:1',
-            'layout.*.h' => 'required|integer|min:1',
+            'layout.*.w' => 'required|integer|min:1|max:12',
+            'layout.*.h' => 'required|integer|min:1|max:12',
         ]);
 
-        $dashboard->update([
-            'layout' => $validated['layout'],
-        ]);
+        try {
+            DB::beginTransaction();
 
-        Log::info('Dashboard layout updated', [
-            'dashboard_id' => $id,
-            'layout_items' => count($validated['layout']),
-        ]);
+            // Update dashboard layout
+            $dashboard->update([
+                'layout' => $validated['layout'],
+            ]);
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Layout updated successfully',
-        ]);
-    }
+            // Update individual widget positions and sizes if they exist
+            foreach ($validated['layout'] as $layoutItem) {
+                if (isset($layoutItem['widget_id'])) {
+                    $widget = Widget::find($layoutItem['widget_id']);
+                    if ($widget && $widget->dashboard_id === $dashboard->id) {
+                        $widget->update([
+                            'position' => [
+                                'x' => $layoutItem['x'],
+                                'y' => $layoutItem['y'],
+                            ],
+                            'size' => [
+                                'w' => $layoutItem['w'],
+                                'h' => $layoutItem['h'],
+                            ],
+                        ]);
+                    }
+                }
+            }
 
-    /**
-     * Add a widget to the dashboard
-     */
-    public function addWidget(Request $request, $id): JsonResponse
-    {
-        $user = Auth::user();
-        $store = $user->stores()->active()->first();
+            DB::commit();
 
-        if (! $store) {
-            return response()->json(['error' => 'No active store found'], 404);
+            Log::info('Dashboard layout updated', [
+                'dashboard_id' => $id,
+                'layout_items' => count($validated['layout']),
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Layout updated successfully',
+            ]);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+
+            Log::error('Failed to update layout', [
+                'dashboard_id' => $id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'error' => 'Failed to update layout: '.$e->getMessage(),
+            ], 500);
         }
-
-        $dashboard = $store->dashboards()->findOrFail($id);
-
-        $validated = $request->validate([
-            'widget_type' => 'required|string',
-            'position' => 'required|array',
-            'position.x' => 'required|integer|min:0',
-            'position.y' => 'required|integer|min:0',
-            'position.w' => 'required|integer|min:1',
-            'position.h' => 'required|integer|min:1',
-        ]);
-
-        $currentLayout = $dashboard->layout ?? [];
-
-        $newWidget = [
-            'i' => $validated['widget_type'],
-            'x' => $validated['position']['x'],
-            'y' => $validated['position']['y'],
-            'w' => $validated['position']['w'],
-            'h' => $validated['position']['h'],
-        ];
-
-        $currentLayout[] = $newWidget;
-
-        $dashboard->update([
-            'layout' => $currentLayout,
-        ]);
-
-        Log::info('Widget added to dashboard', [
-            'dashboard_id' => $id,
-            'widget_type' => $validated['widget_type'],
-            'position' => $validated['position'],
-        ]);
-
-        return response()->json([
-            'success' => true,
-            'message' => 'Widget added successfully',
-            'widget' => $newWidget,
-        ]);
     }
 
     /**
-     * Remove a widget from the dashboard
+     * Remove a widget from the dashboard - IMPROVED VERSION
      */
     public function removeWidget(Request $request, $id, $widgetId): JsonResponse
     {
@@ -271,25 +354,70 @@ class DashboardController extends Controller
         }
 
         $dashboard = $store->dashboards()->findOrFail($id);
-        $currentLayout = $dashboard->layout ?? [];
 
-        // Remove the widget from layout
-        $newLayout = array_filter($currentLayout, function ($item) use ($widgetId) {
-            return $item['i'] !== $widgetId;
-        });
+        try {
+            DB::beginTransaction();
 
-        $dashboard->update([
-            'layout' => array_values($newLayout), // Reset array keys
-        ]);
+            // Remove from layout
+            $currentLayout = $dashboard->layout ?? [];
+            $newLayout = array_filter($currentLayout, function ($item) use ($widgetId) {
+                return $item['i'] !== $widgetId;
+            });
 
-        Log::info('Widget removed from dashboard', [
-            'dashboard_id' => $id,
-            'widget_id' => $widgetId,
-        ]);
+            // Update dashboard layout
+            $dashboard->update([
+                'layout' => array_values($newLayout),
+            ]);
+
+            // Soft delete the widget record if it exists
+            $widget = Widget::where('dashboard_id', $dashboard->id)
+                ->where('type', $widgetId)
+                ->first();
+
+            if ($widget) {
+                $widget->delete(); // Soft delete
+            }
+
+            DB::commit();
+
+            Log::info('Widget removed from dashboard', [
+                'dashboard_id' => $id,
+                'widget_id' => $widgetId,
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Widget removed successfully',
+            ]);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+
+            Log::error('Failed to remove widget', [
+                'dashboard_id' => $id,
+                'widget_id' => $widgetId,
+                'error' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'error' => 'Failed to remove widget: '.$e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Get available widget templates
+     */
+    public function getWidgetTemplates(): JsonResponse
+    {
+        $templates = WidgetTemplate::where('is_active', true)
+            ->orderBy('name')
+            ->get();
 
         return response()->json([
             'success' => true,
-            'message' => 'Widget removed successfully',
+            'templates' => $templates,
         ]);
     }
 
@@ -307,52 +435,24 @@ class DashboardController extends Controller
 
         $dashboard = $store->dashboards()->findOrFail($id);
 
+        $widget = Widget::where('dashboard_id', $dashboard->id)
+            ->where('id', $widgetId)
+            ->firstOrFail();
+
         $validated = $request->validate([
-            'position' => 'sometimes|array',
-            'position.x' => 'sometimes|integer|min:0',
-            'position.y' => 'sometimes|integer|min:0',
-            'position.w' => 'sometimes|integer|min:1',
-            'position.h' => 'sometimes|integer|min:1',
+            'title' => 'sometimes|string|max:255',
+            'chart_type' => 'sometimes|string',
             'config' => 'sometimes|array',
+            'filters' => 'sometimes|array',
+            'settings' => 'sometimes|array',
         ]);
 
-        $currentLayout = $dashboard->layout ?? [];
-        $widgetSettings = $dashboard->settings['widgets'] ?? [];
-
-        // Update layout if position is provided
-        if (isset($validated['position'])) {
-            foreach ($currentLayout as &$item) {
-                if ($item['i'] === $widgetId) {
-                    $item = array_merge($item, $validated['position']);
-                    break;
-                }
-            }
-        }
-
-        // Update widget config if provided
-        if (isset($validated['config'])) {
-            $widgetSettings[$widgetId] = array_merge(
-                $widgetSettings[$widgetId] ?? [],
-                $validated['config']
-            );
-        }
-
-        $dashboard->update([
-            'layout' => $currentLayout,
-            'settings' => array_merge($dashboard->settings ?? [], [
-                'widgets' => $widgetSettings,
-            ]),
-        ]);
-
-        Log::info('Widget updated', [
-            'dashboard_id' => $id,
-            'widget_id' => $widgetId,
-            'updates' => array_keys($validated),
-        ]);
+        $widget->update($validated);
 
         return response()->json([
             'success' => true,
             'message' => 'Widget updated successfully',
+            'widget' => $widget,
         ]);
     }
 
