@@ -249,8 +249,6 @@
                         </div>
                     </div>
 
-                    <!-- Debug Info (remove in production) -->
-
                     <!-- Widget Grid -->
                     <DashboardGrid
                         v-if="layout.length > 0"
@@ -668,13 +666,7 @@ const updateLayout = async (newLayout) => {
     try {
         console.log('Updating layout - RAW:', newLayout);
 
-        // Safety check
-        if (!Array.isArray(newLayout)) {
-            console.warn('newLayout is not an array:', newLayout);
-            return;
-        }
-
-        // Clean the layout data
+        // Clean and validate the layout data before sending
         const cleanLayout = newLayout
             .filter((item) => item && typeof item === 'object')
             .map((item) => ({
@@ -686,6 +678,8 @@ const updateLayout = async (newLayout) => {
                 ...(item.widget_id && { widget_id: item.widget_id }),
             }))
             .filter((item) => item.i);
+
+        console.log('Cleaned layout:', cleanLayout);
 
         if (cleanLayout.length === 0) {
             console.warn('No valid layout items to update');
@@ -702,6 +696,11 @@ const updateLayout = async (newLayout) => {
         console.log('Layout updated successfully');
     } catch (error) {
         console.error('Error updating layout:', error);
+
+        if (error.response?.status === 422) {
+            console.error('Validation errors:', error.response.data.errors);
+            console.error('Failed layout data:', error.config.data);
+        }
     }
 };
 
@@ -795,44 +794,34 @@ const removeWidget = async (widgetId) => {
         );
 
         if (response.data.success) {
-            console.log('Widget removed successfully from backend');
+            console.log('Widget removed successfully');
 
-            // Simply filter out the widget - this will trigger reactivity
-            layout.value = layout.value.filter(
+            // Update local layout by removing the widget
+            const newLayout = layout.value.filter(
                 (widget) => widget.i !== widgetId
             );
+            layout.value = newLayout;
 
-            console.log('Widget removed from UI successfully!');
+            console.log('Widget removed from dashboard successfully!');
         } else {
             console.error('Failed to remove widget:', response.data);
-            alert(
-                'Failed to remove widget: ' +
-                    (response.data.error || 'Unknown error')
-            );
         }
     } catch (error) {
         console.error('Error removing widget:', error);
-
-        if (error.response?.status === 404) {
-            // Widget already deleted, remove from UI
-            layout.value = layout.value.filter(
-                (widget) => widget.i !== widgetId
-            );
-        } else {
-            alert('Failed to remove widget. Please try again.');
-        }
+        alert('Failed to remove widget. Please try again.');
     }
 };
 
-// Watch for layout changes from props
+// Watch for layout changes
 watch(
-    () => props.dashboard?.layout,
-    (newLayout) => {
-        if (Array.isArray(newLayout)) {
-            layout.value = [...newLayout];
-        }
+    layout,
+    (newLayout, oldLayout) => {
+        console.log('=== LAYOUT CHANGED ===');
+        console.log('From:', oldLayout?.length || 0, 'items');
+        console.log('To:', newLayout?.length || 0, 'items');
+        console.log('New layout:', newLayout);
     },
-    { immediate: true }
+    { deep: true }
 );
 
 // Watch for widget data changes
