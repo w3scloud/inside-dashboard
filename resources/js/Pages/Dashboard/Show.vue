@@ -250,39 +250,6 @@
                     </div>
 
                     <!-- Debug Info (remove in production) -->
-                    <div
-                        v-if="showDebugInfo"
-                        class="mb-6 p-4 bg-gray-100 rounded-lg"
-                    >
-                        <h3 class="font-medium text-gray-900 mb-2">
-                            Debug Information
-                        </h3>
-                        <div class="text-sm text-gray-700 space-y-1">
-                            <p>Layout items: {{ layout.length }}</p>
-                            <p>
-                                Widget data keys:
-                                {{ Object.keys(widgetData).join(', ') }}
-                            </p>
-                            <p>
-                                Available widgets: {{ availableWidgets.length }}
-                            </p>
-                            <details class="mt-2">
-                                <summary class="cursor-pointer text-blue-600">
-                                    Show Layout Details
-                                </summary>
-                                <pre
-                                    class="mt-2 text-xs bg-white p-2 rounded"
-                                    >{{ JSON.stringify(layout, null, 2) }}</pre
-                                >
-                            </details>
-                        </div>
-                        <button
-                            @click="showDebugInfo = false"
-                            class="mt-2 text-xs text-gray-500 hover:text-gray-700"
-                        >
-                            Hide Debug Info
-                        </button>
-                    </div>
 
                     <!-- Widget Grid -->
                     <DashboardGrid
@@ -701,7 +668,13 @@ const updateLayout = async (newLayout) => {
     try {
         console.log('Updating layout - RAW:', newLayout);
 
-        // Clean and validate the layout data before sending
+        // Safety check
+        if (!Array.isArray(newLayout)) {
+            console.warn('newLayout is not an array:', newLayout);
+            return;
+        }
+
+        // Clean the layout data
         const cleanLayout = newLayout
             .filter((item) => item && typeof item === 'object')
             .map((item) => ({
@@ -713,8 +686,6 @@ const updateLayout = async (newLayout) => {
                 ...(item.widget_id && { widget_id: item.widget_id }),
             }))
             .filter((item) => item.i);
-
-        console.log('Cleaned layout:', cleanLayout);
 
         if (cleanLayout.length === 0) {
             console.warn('No valid layout items to update');
@@ -731,11 +702,6 @@ const updateLayout = async (newLayout) => {
         console.log('Layout updated successfully');
     } catch (error) {
         console.error('Error updating layout:', error);
-
-        if (error.response?.status === 422) {
-            console.error('Validation errors:', error.response.data.errors);
-            console.error('Failed layout data:', error.config.data);
-        }
     }
 };
 
@@ -829,34 +795,44 @@ const removeWidget = async (widgetId) => {
         );
 
         if (response.data.success) {
-            console.log('Widget removed successfully');
+            console.log('Widget removed successfully from backend');
 
-            // Update local layout by removing the widget
-            const newLayout = layout.value.filter(
+            // Simply filter out the widget - this will trigger reactivity
+            layout.value = layout.value.filter(
                 (widget) => widget.i !== widgetId
             );
-            layout.value = newLayout;
 
-            console.log('Widget removed from dashboard successfully!');
+            console.log('Widget removed from UI successfully!');
         } else {
             console.error('Failed to remove widget:', response.data);
+            alert(
+                'Failed to remove widget: ' +
+                    (response.data.error || 'Unknown error')
+            );
         }
     } catch (error) {
         console.error('Error removing widget:', error);
-        alert('Failed to remove widget. Please try again.');
+
+        if (error.response?.status === 404) {
+            // Widget already deleted, remove from UI
+            layout.value = layout.value.filter(
+                (widget) => widget.i !== widgetId
+            );
+        } else {
+            alert('Failed to remove widget. Please try again.');
+        }
     }
 };
 
-// Watch for layout changes
+// Watch for layout changes from props
 watch(
-    layout,
-    (newLayout, oldLayout) => {
-        console.log('=== LAYOUT CHANGED ===');
-        console.log('From:', oldLayout?.length || 0, 'items');
-        console.log('To:', newLayout?.length || 0, 'items');
-        console.log('New layout:', newLayout);
+    () => props.dashboard?.layout,
+    (newLayout) => {
+        if (Array.isArray(newLayout)) {
+            layout.value = [...newLayout];
+        }
     },
-    { deep: true }
+    { immediate: true }
 );
 
 // Watch for widget data changes

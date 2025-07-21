@@ -30,26 +30,6 @@
             v-else
             class="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6"
         >
-            <!-- Debug: Show layout info -->
-            <div
-                v-if="showDebug"
-                class="xl:col-span-3 p-4 bg-blue-50 rounded border"
-            >
-                <h4 class="font-medium text-blue-900">Debug Info</h4>
-                <p class="text-sm text-blue-700">
-                    Layout items: {{ layout.length }}
-                </p>
-                <p class="text-sm text-blue-700">
-                    Widget data keys: {{ Object.keys(widgetData).join(', ') }}
-                </p>
-                <div class="mt-2 text-xs text-blue-600">
-                    <div v-for="widget in layout" :key="widget.i" class="mb-1">
-                        Widget: {{ widget.i }} → Component:
-                        {{ getWidgetComponent(widget.i) ? '✅' : '❌' }}
-                    </div>
-                </div>
-            </div>
-
             <!-- Dynamically render widgets based on layout -->
             <div
                 v-for="widget in layout"
@@ -99,7 +79,6 @@
 
                 <!-- Render actual widget -->
                 <component
-                    v-else
                     :is="getWidgetComponent(widget.i)"
                     :data="getWidgetData(widget.i)"
                     :loading="loading"

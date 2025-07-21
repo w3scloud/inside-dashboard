@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Dashboard;
+use App\Models\Widget;
 use App\Models\WidgetTemplate;
 use App\Services\GraphQLAnalyticsService;
 use Carbon\Carbon;
@@ -26,7 +27,7 @@ class DashboardController extends Controller
     /**
      * Display a listing of dashboards.
      */
-    public function index(): InertiaResponse
+    public function index()
     {
         $user = Auth::user();
         $store = $user->stores()->active()->first();

@@ -129,6 +129,7 @@ class Dashboard extends Model
         $layout = $this->layout ?? [];
 
         $layout = array_filter($layout, function ($widget) use ($widgetId) {
+
             return $widget['id'] !== $widgetId;
         });
 
