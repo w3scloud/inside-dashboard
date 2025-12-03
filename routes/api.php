@@ -11,8 +11,12 @@ Route::prefix('analytics')->group(function () {
     Route::get('/inventory', [AnalyticsController::class, 'inventory']);
     Route::get('/test-graphql', [AnalyticsController::class, 'testGraphQL']);
     Route::get('/export', [AnalyticsController::class, 'export']);
-    Route::get('/debug/all-orders', [AnalyticsController::class, 'debugAllOrders']);
-    Route::get('/debug/date-range', [AnalyticsController::class, 'debugDateRange']);
-    Route::get('/debug/debugscopes', [AnalyticsController::class, 'debugScopes']);
-    Route::get('/debug/graphql-date-query', [AnalyticsController::class, 'debugGraphQLDateQuery']);
+
+    // Debug routes - only available in non-production environments
+    if (app()->environment(['local', 'testing', 'development'])) {
+        Route::get('/debug/all-orders', [AnalyticsController::class, 'debugAllOrders']);
+        Route::get('/debug/date-range', [AnalyticsController::class, 'debugDateRange']);
+        Route::get('/debug/debugscopes', [AnalyticsController::class, 'debugScopes']);
+        Route::get('/debug/graphql-date-query', [AnalyticsController::class, 'debugGraphQLDateQuery']);
+    }
 });

@@ -21,31 +21,16 @@ const submit = () => {
 
     isLoading.value = true;
 
-    // Use regular form submission instead of AJAX to avoid CORS
-    const formElement = document.createElement('form');
-    formElement.method = 'POST';
-    formElement.action = route('shopify.auth');
-
-    // Add CSRF token
-    const csrfInput = document.createElement('input');
-    csrfInput.type = 'hidden';
-    csrfInput.name = '_token';
-    csrfInput.value =
-        document
-            .querySelector('meta[name="csrf-token"]')
-            ?.getAttribute('content') || '';
-    formElement.appendChild(csrfInput);
-
-    // Add shop domain
-    const shopInput = document.createElement('input');
-    shopInput.type = 'hidden';
-    shopInput.name = 'shop';
-    shopInput.value = form.shop;
-    formElement.appendChild(shopInput);
-
-    // Submit form
-    document.body.appendChild(formElement);
-    formElement.submit();
+    // Use Inertia's form submission which handles CSRF automatically
+    form.post(route('shopify.auth'), {
+        preserveScroll: true,
+        onFinish: () => {
+            isLoading.value = false;
+        },
+        onError: (errors) => {
+            isLoading.value = false;
+        },
+    });
 };
 
 const normalizeShopDomain = (value) => {
@@ -140,7 +125,12 @@ const handleShopInput = (event) => {
             </div>
         </div>
 
-        <form @submit.prevent="submit" class="space-y-6">
+        <form
+            @submit.prevent="submit"
+            class="space-y-6"
+            method="POST"
+            :action="route('shopify.auth')"
+        >
             <div>
                 <InputLabel for="shop" value="Your Shopify Store Domain" />
 

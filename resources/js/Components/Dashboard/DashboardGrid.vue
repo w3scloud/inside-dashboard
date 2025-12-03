@@ -122,7 +122,7 @@ const props = defineProps({
 const emit = defineEmits(['remove-widget', 'update:layout']);
 
 // Show debug info (set to false in production)
-const showDebug = ref(true);
+const showDebug = ref(false);
 
 // Widget component mapping
 const widgetComponents = {
@@ -257,8 +257,7 @@ const debugInfo = computed(() => ({
     })),
 }));
 
-// Console debug (can be removed in production)
-console.log('DashboardGrid mounted with:', debugInfo.value);
+// Debug info available via debugInfo computed property if needed
 </script>
 
 <style scoped>

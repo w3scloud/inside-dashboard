@@ -17,6 +17,12 @@ return Application::configure(basePath: dirname(__DIR__))
             \Illuminate\Http\Middleware\AddLinkHeadersForPreloadedAssets::class,
         ]);
 
+        // Replace default CSRF middleware with our custom one
+        $middleware->validateCsrfTokens(except: [
+            'auth/shopify', // Shopify OAuth initiation
+            'shopify.callback', // OAuth callback from Shopify (external)
+        ]);
+
         // Register custom middleware aliases
         $middleware->alias([
             'shopify.store' => \App\Http\Middleware\HandleShopifyAuth::class,

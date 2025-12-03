@@ -287,6 +287,10 @@ class ShopifyGraphQLService
         $after = $options['after'] ?? null;
         $query = $options['query'] ?? null;
 
+        // NOTE: Keep this query restricted to fields that are available on the
+        // current Admin GraphQL API version. Some older fields such as
+        // weight/weightUnit/requiresShipping/inventoryManagement caused
+        // errors and resulted in empty analytics.
         $graphqlQuery = '
             query getProducts($first: Int!, $after: String, $query: String) {
                 products(first: $first, after: $after, query: $query) {
@@ -322,11 +326,6 @@ class ShopifyGraphQLService
                                         price
                                         compareAtPrice
                                         inventoryQuantity
-                                        weight
-                                        weightUnit
-                                        requiresShipping
-                                        inventoryManagement
-                                        inventoryPolicy
                                     }
                                 }
                             }
@@ -523,14 +522,9 @@ class ShopifyGraphQLService
                 'id' => $this->extractId($node['id']),
                 'title' => $node['title'],
                 'sku' => $node['sku'],
-                'price' => floatval($node['price']),
-                'compare_at_price' => $node['compareAtPrice'] ? floatval($node['compareAtPrice']) : null,
-                'inventory_quantity' => $node['inventoryQuantity'],
-                'weight' => $node['weight'],
-                'weight_unit' => $node['weightUnit'],
-                'requires_shipping' => $node['requiresShipping'],
-                'inventory_management' => $node['inventoryManagement'],
-                'inventory_policy' => $node['inventoryPolicy'],
+                'price' => isset($node['price']) ? floatval($node['price']) : 0.0,
+                'compare_at_price' => isset($node['compareAtPrice']) ? floatval($node['compareAtPrice']) : null,
+                'inventory_quantity' => $node['inventoryQuantity'] ?? 0,
             ];
         }
 

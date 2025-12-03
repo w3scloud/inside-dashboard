@@ -169,7 +169,9 @@ return [
     |
     */
 
-    'secure' => env('SESSION_SECURE_COOKIE'),
+    // For embedded Shopify apps we need Secure cookies so they work in iframes.
+    // Default to true so cookies are always sent over HTTPS.
+    'secure' => env('SESSION_SECURE_COOKIE', true),
 
     /*
     |--------------------------------------------------------------------------
@@ -199,7 +201,9 @@ return [
     |
     */
 
-    'same_site' => env('SESSION_SAME_SITE', 'lax'),
+    // Embedded apps require SameSite=None so cookies are sent in the Shopify iframe.
+    // See: https://shopify.dev/docs/apps/build/embedded/iframe-security
+    'same_site' => env('SESSION_SAME_SITE', 'none'),
 
     /*
     |--------------------------------------------------------------------------
@@ -212,6 +216,8 @@ return [
     |
     */
 
-    'partitioned' => env('SESSION_PARTITIONED_COOKIE', false),
+    // Partitioned cookies (CHIPS) are recommended for embedded apps so that
+    // third‑party cookies continue to work in modern browsers.
+    'partitioned' => env('SESSION_PARTITIONED_COOKIE', true),
 
 ];

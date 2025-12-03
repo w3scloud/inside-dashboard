@@ -21,17 +21,32 @@ class GraphQLAnalyticsService
 
     /**
      * Get comprehensive analytics dashboard.
+     *
+     * If no dates are provided we default to the last 30 days. Widgets
+     * on the Vue side pass a date range which we honour here so that
+     * all tiles and charts reflect the selected period.
      */
-    public function getDashboardAnalytics(Store $store): array
-    {
+    public function getDashboardAnalytics(
+        Store $store,
+        ?Carbon $startDate = null,
+        ?Carbon $endDate = null
+    ): array {
+        // Normalise the date range
+        $startDate = $startDate ?? now()->subDays(30);
+        $endDate = $endDate ?? now();
+
         try {
             return [
-                'sales_analytics' => $this->getSalesAnalytics($store),
+                'sales_analytics' => $this->getSalesAnalytics($store, $startDate, $endDate),
                 'product_analytics' => $this->getProductAnalytics($store),
                 'customer_analytics' => $this->getCustomerAnalytics($store),
                 'inventory_analytics' => $this->getInventoryAnalytics($store),
                 'performance_metrics' => $this->getPerformanceMetrics($store),
                 'data_sources' => $this->getDataSourceStatus($store),
+                'period' => [
+                    'start' => $startDate->toDateString(),
+                    'end' => $endDate->toDateString(),
+                ],
                 'generated_at' => now()->toISOString(),
             ];
         } catch (\Exception $e) {
@@ -55,65 +70,40 @@ class GraphQLAnalyticsService
         $startDate = $startDate ?? now()->subDays(30);
         $endDate = $endDate ?? now();
 
-        // DISABLE CACHE FOR DEBUGGING
-        // $cacheKey = "sales_analytics_{$store->id}_".($startDate ? $startDate->format('Y-m-d') : 'default').'_'.($endDate ? $endDate->format('Y-m-d') : 'default');
+        $cacheKey = "sales_analytics_{$store->id}_".($startDate ? $startDate->format('Y-m-d') : 'default').'_'.($endDate ? $endDate->format('Y-m-d') : 'default');
 
-        // return Cache::remember($cacheKey, now()->addMinutes(30), function () use ($store, $startDate, $endDate) {
+        return Cache::remember($cacheKey, now()->addMinutes(30), function () use ($store, $startDate, $endDate) {
+            try {
+                $ordersResult = $this->graphqlService->getOrdersByDateRange($store, $startDate, $endDate);
 
-        Log::info('=== getSalesAnalytics START ===', [
-            'store_id' => $store->id,
-            'store_domain' => $store->shop_domain,
-            'start_date' => $startDate->toDateString(),
-            'end_date' => $endDate->toDateString(),
-        ]);
+                if (isset($ordersResult['error'])) {
+                    Log::warning('Orders result has error', ['error' => $ordersResult['error']]);
 
-        try {
-            Log::info('Calling graphqlService->getOrdersByDateRange');
+                    return $this->generateEmptySalesAnalytics($startDate, $endDate);
+                }
 
-            $ordersResult = $this->graphqlService->getOrdersByDateRange($store, $startDate, $endDate);
+                if (empty($ordersResult['orders'])) {
+                    Log::info('No orders found in date range', [
+                        'store_id' => $store->id,
+                        'start_date' => $startDate->toDateString(),
+                        'end_date' => $endDate->toDateString(),
+                    ]);
 
-            Log::info('getOrdersByDateRange result', [
-                'result_type' => gettype($ordersResult),
-                'is_array' => is_array($ordersResult),
-                'has_error' => isset($ordersResult['error']),
-                'has_orders' => isset($ordersResult['orders']),
-                'orders_count' => isset($ordersResult['orders']) ? count($ordersResult['orders']) : 'N/A',
-                'full_result' => $ordersResult,
-            ]);
+                    return $this->generateEmptySalesAnalytics($startDate, $endDate);
+                }
 
-            if (isset($ordersResult['error'])) {
-                Log::warning('Orders result has error', ['error' => $ordersResult['error']]);
+                return $this->analyzeSalesData($ordersResult['orders'], $startDate, $endDate);
 
-                return $this->generateEmptySalesAnalytics($startDate, $endDate);
-            }
-
-            if (empty($ordersResult['orders'])) {
-                Log::warning('Orders result is empty', [
-                    'ordersResult' => $ordersResult,
-                    'empty_check' => empty($ordersResult['orders']),
-                    'isset_check' => isset($ordersResult['orders']),
+            } catch (\Exception $e) {
+                Log::error('Exception in getSalesAnalytics', [
+                    'store_id' => $store->id,
+                    'error' => $e->getMessage(),
+                    'trace' => $e->getTraceAsString(),
                 ]);
 
                 return $this->generateEmptySalesAnalytics($startDate, $endDate);
             }
-
-            Log::info('Found orders, analyzing sales data', [
-                'orders_count' => count($ordersResult['orders']),
-                'sample_order' => $ordersResult['orders'][0] ?? 'No orders',
-            ]);
-
-            return $this->analyzeSalesData($ordersResult['orders'], $startDate, $endDate);
-
-        } catch (\Exception $e) {
-            Log::error('Exception in getSalesAnalytics', [
-                'store_id' => $store->id,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
-            ]);
-
-            return $this->generateEmptySalesAnalytics($startDate, $endDate);
-        }
-        // }); // Commented out cache for debugging
+        });
     }
 
     /**
@@ -282,6 +272,9 @@ class GraphQLAnalyticsService
 
         $growthRate = $firstHalfSales > 0 ? (($secondHalfSales - $firstHalfSales) / $firstHalfSales) * 100 : 0;
 
+        $dailySalesArray = array_values($dailySales);
+        $hourlySalesArray = array_values($hourlySales);
+
         return [
             'summary' => [
                 'total_sales' => round($totalSales, 2),
@@ -295,16 +288,26 @@ class GraphQLAnalyticsService
                     'days' => $startDate->diffInDays($endDate) + 1,
                 ],
             ],
-            'daily_sales' => array_values($dailySales),
-            'hourly_sales' => array_values($hourlySales),
+
+            // Flat data used directly by some widgets
+            'daily_sales' => $dailySalesArray,
+            'hourly_sales' => $hourlySalesArray,
             'top_products' => array_slice(array_values($productSales), 0, 20),
             'status_breakdown' => $statusBreakdown,
+
+            // Backwards‑compatible "charts" and "trends" structures expected by Vue
             'charts' => [
-                'daily_trend' => array_values($dailySales),
-                'hourly_today' => array_values($hourlySales),
+                'daily_trend' => $dailySalesArray,
+                'hourly_today' => $hourlySalesArray,
                 'status_pie' => array_map(function ($status, $count) {
                     return ['name' => ucfirst($status), 'value' => $count];
                 }, array_keys($statusBreakdown), $statusBreakdown),
+            ],
+            'trends' => [
+                'daily_sales' => $dailySalesArray,
+                'hourly_sales' => $hourlySalesArray,
+                // Reserved for future monthly aggregation used by the Revenue Trends widget
+                'monthly_trends' => [],
             ],
         ];
     }

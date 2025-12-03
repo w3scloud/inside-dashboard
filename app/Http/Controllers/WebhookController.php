@@ -224,15 +224,16 @@ class WebhookController extends Controller
             'order_id' => $webhookData['id'] ?? null,
         ]);
 
-        // TODO: Implement cancellation logic (subtract from analytics)
-        // This would require more complex logic to reverse the order impact
+        // Process with real-time analytics to clear relevant caches
+        $this->realTimeAnalyticsService->processWebhookData('orders/cancelled', $webhookData, $store);
 
+        // Log the cancellation event with negative value to reverse the order impact
         $this->logAnalyticsEvent(
             $store,
             'order_cancelled',
             $webhookData['id'] ?? '',
             $webhookData,
-            -(float) ($webhookData['total_price'] ?? 0) // Negative value
+            -(float) ($webhookData['total_price'] ?? 0) // Negative value to subtract from analytics
         );
     }
 

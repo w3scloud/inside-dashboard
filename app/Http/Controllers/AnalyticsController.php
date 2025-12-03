@@ -29,7 +29,21 @@ class AnalyticsController extends Controller
     {
         try {
             $store = $this->getStore($request);
-            $analytics = $this->analyticsService->getDashboardAnalytics($store);
+
+            // Optional date range coming from the Vue date picker
+            $startDate = $request->has('start_date')
+                ? Carbon::parse($request->input('start_date'))
+                : null;
+
+            $endDate = $request->has('end_date')
+                ? Carbon::parse($request->input('end_date'))->endOfDay()
+                : null;
+
+            $analytics = $this->analyticsService->getDashboardAnalytics(
+                $store,
+                $startDate,
+                $endDate
+            );
 
             return response()->json([
                 'success' => true,

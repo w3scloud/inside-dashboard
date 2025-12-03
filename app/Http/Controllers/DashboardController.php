@@ -127,8 +127,8 @@ class DashboardController extends Controller
                 Carbon::parse($request->input('end_date')) :
                 now();
 
-            // Use the working getDashboardAnalytics method
-            $data = $this->analyticsService->getDashboardAnalytics($store);
+            // Use the working getDashboardAnalytics method with explicit dates
+            $data = $this->analyticsService->getDashboardAnalytics($store, $startDate, $endDate);
 
             return response()->json([
                 'success' => true,

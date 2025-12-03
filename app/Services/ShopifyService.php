@@ -24,7 +24,10 @@ class ShopifyService
     {
         $apiKey = config('shopify.api_key');
         $scopes = implode(',', config('shopify.scopes'));
-        $redirectUri = route('shopify.callback');
+        $redirectUri = route('shopify.callback', [], true); // Get absolute URL
+
+        // URL encode the redirect URI
+        $redirectUri = urlencode($redirectUri);
 
         return "https://{$shop}/admin/oauth/authorize?client_id={$apiKey}&scope={$scopes}&redirect_uri={$redirectUri}";
     }

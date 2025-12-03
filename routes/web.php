@@ -26,15 +26,16 @@ Route::get('/', [ShopifyController::class, 'showLogin'])
     ->name('home');
 
 // Authentication routes
+// Note: We don't use 'guest' middleware here because authenticated users
+// need to access these routes to be redirected to dashboard if they have a store
+Route::get('/login', [ShopifyController::class, 'showLogin'])
+    ->name('login');
+
+Route::get('/auth/shopify', [ShopifyController::class, 'showLogin'])
+    ->name('shopify.login');
+
+// OAuth initiation (POST) - only for guests
 Route::middleware('guest')->group(function () {
-    // Shopify login page
-    Route::get('/login', [ShopifyController::class, 'showLogin'])
-        ->name('login');
-
-    // Shopify OAuth routes
-    Route::get('/auth/shopify', [ShopifyController::class, 'showLogin'])
-        ->name('shopify.login');
-
     // Handle shop domain submission and initiate OAuth
     Route::post('/auth/shopify', [ShopifyController::class, 'initiateOAuth'])
         ->name('shopify.auth');

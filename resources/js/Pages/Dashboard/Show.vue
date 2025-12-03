@@ -337,7 +337,7 @@ const loading = ref(false);
 const widgetData = ref({});
 const showAddWidgetModal = ref(false);
 const refreshInterval = ref(null);
-const showDebugInfo = ref(true); // Set to false in production
+const showDebugInfo = ref(false); // Set to false in production
 
 // Initialize dateRange with default values
 const dateRange = ref({
@@ -706,11 +706,6 @@ const updateLayout = async (newLayout) => {
 
 const addWidget = async (widgetType, position) => {
     try {
-        console.log('=== ADD WIDGET DEBUG ===');
-        console.log('Widget Type:', widgetType);
-        console.log('Position:', position);
-        console.log('Dashboard ID:', props.dashboard.id);
-
         const widgetData = {
             widget_type: widgetType,
             position: {
