@@ -19,17 +19,47 @@ class ShopifyService
 
     /**
      * Generate the Shopify OAuth URL.
+     * State (nonce) is required by Shopify and must be verified on callback.
+     * Scope must never be empty or the installed app token will have no permissions (access_scopes []).
      */
-    public function getAuthUrl(string $shop): string
+    public function getAuthUrl(string $shop, ?string $state = null): string
     {
         $apiKey = config('shopify.api_key');
-        $scopes = implode(',', config('shopify.scopes'));
+        $scopeList = config('shopify.scopes');
+if (empty($scopeList) || ! is_array($scopeList)) {
+                    $scopeList = [
+                        'read_shop',
+                        'read_products',
+                        'read_orders',
+                'read_customers',
+                'read_inventory',
+                'read_content',
+                'read_themes',
+                'read_analytics',
+                'read_reports',
+            ];
+        }
+        $scopes = implode(',', $scopeList);
         $redirectUri = route('shopify.callback', [], true); // Get absolute URL
 
-        // URL encode the redirect URI
-        $redirectUri = urlencode($redirectUri);
+        Log::info('Generating Shopify OAuth URL', [
+            'shop' => $shop,
+            'api_key_present' => ! empty($apiKey),
+            'redirect_uri' => $redirectUri,
+            'scope' => $scopes,
+        ]);
 
-        return "https://{$shop}/admin/oauth/authorize?client_id={$apiKey}&scope={$scopes}&redirect_uri={$redirectUri}";
+        // Pass raw redirect_uri; http_build_query encodes it once. Double-encoding causes 400.
+        $params = [
+            'client_id' => $apiKey,
+            'scope' => $scopes,
+            'redirect_uri' => $redirectUri,
+        ];
+        if ($state !== null && $state !== '') {
+            $params['state'] = $state;
+        }
+
+        return 'https://'.$shop.'/admin/oauth/authorize?'.http_build_query($params);
     }
 
     /**
@@ -306,17 +336,13 @@ class ShopifyService
      */
     public function getProducts(Store $store, int $limit = 50, int $page = 1): ?array
     {
-        $cacheKey = "products_{$store->id}_{$limit}_{$page}";
+        $endpoint = '/admin/api/2023-07/products.json';
+        $params = [
+            'limit' => min($limit, 250), // Shopify max limit
+            'page' => $page,
+        ];
 
-        return Cache::remember($cacheKey, now()->addMinutes(30), function () use ($store, $limit, $page) {
-            $endpoint = '/admin/api/2023-07/products.json';
-            $params = [
-                'limit' => min($limit, 250), // Shopify max limit
-                'page' => $page,
-            ];
-
-            return $this->makeApiCall($store, 'GET', $endpoint, $params);
-        });
+        return $this->makeApiCall($store, 'GET', $endpoint, $params);
     }
 
     /**
@@ -324,42 +350,38 @@ class ShopifyService
      */
     public function getAllProducts(Store $store, int $maxProducts = 1000): array
     {
-        $cacheKey = "all_products_{$store->id}_{$maxProducts}";
+        $allProducts = [];
+        $page = 1;
+        $limit = 250; // Max per page
+        $maxPages = ceil($maxProducts / $limit);
 
-        return Cache::remember($cacheKey, now()->addHours(1), function () use ($store, $maxProducts) {
-            $allProducts = [];
-            $page = 1;
-            $limit = 250; // Max per page
-            $maxPages = ceil($maxProducts / $limit);
+        do {
+            $response = $this->getProducts($store, $limit, $page);
 
-            do {
-                $response = $this->getProducts($store, $limit, $page);
+            if (! $response || ! isset($response['products'])) {
+                break;
+            }
 
-                if (! $response || ! isset($response['products'])) {
-                    break;
-                }
+            $products = $response['products'];
+            $allProducts = array_merge($allProducts, $products);
 
-                $products = $response['products'];
-                $allProducts = array_merge($allProducts, $products);
+            Log::info('Fetched products page (no cache)', [
+                'store_id' => $store->id,
+                'page' => $page,
+                'products_count' => count($products),
+                'total_so_far' => count($allProducts),
+            ]);
 
-                Log::info('Fetched products page', [
-                    'store_id' => $store->id,
-                    'page' => $page,
-                    'products_count' => count($products),
-                    'total_so_far' => count($allProducts),
-                ]);
+            $page++;
 
-                $page++;
+            // Rate limiting
+            if ($page > 1) {
+                usleep(500000); // 0.5 second delay
+            }
 
-                // Rate limiting
-                if ($page > 1) {
-                    usleep(500000); // 0.5 second delay
-                }
+        } while (count($products) === $limit && $page <= $maxPages && count($allProducts) < $maxProducts);
 
-            } while (count($products) === $limit && $page <= $maxPages && count($allProducts) < $maxProducts);
-
-            return $allProducts;
-        });
+        return $allProducts;
     }
 
     /**
@@ -367,14 +389,10 @@ class ShopifyService
      */
     public function getProductDetails(Store $store, string $productId): ?array
     {
-        $cacheKey = "product_details_{$store->id}_{$productId}";
+        $endpoint = "/admin/api/2023-07/products/{$productId}.json";
+        $result = $this->makeApiCall($store, 'GET', $endpoint);
 
-        return Cache::remember($cacheKey, now()->addMinutes(30), function () use ($store, $productId) {
-            $endpoint = "/admin/api/2023-07/products/{$productId}.json";
-            $result = $this->makeApiCall($store, 'GET', $endpoint);
-
-            return $result ? $result['product'] : null;
-        });
+        return $result ? $result['product'] : null;
     }
 
     /**

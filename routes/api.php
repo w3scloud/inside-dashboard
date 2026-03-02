@@ -3,7 +3,8 @@
 use App\Http\Controllers\AnalyticsController;
 use Illuminate\Support\Facades\Route;
 
-Route::prefix('analytics')->group(function () {
+// Use web middleware so session/auth is available and we use the logged-in user's store
+Route::prefix('analytics')->middleware(['web', 'auth'])->group(function () {
     Route::get('/dashboard', [AnalyticsController::class, 'dashboard']);
     Route::get('/sales', [AnalyticsController::class, 'sales']);
     Route::get('/products', [AnalyticsController::class, 'products']);

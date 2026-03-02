@@ -64,76 +64,169 @@ class GraphQLAnalyticsService
 
     /**
      * Get sales analytics using GraphQL orders.
+     *
+     * This version makes a fresh Shopify API call on every request (no cache),
+     * so dashboard widgets always reflect the latest data.
      */
     public function getSalesAnalytics(Store $store, ?Carbon $startDate = null, ?Carbon $endDate = null): array
     {
         $startDate = $startDate ?? now()->subDays(30);
         $endDate = $endDate ?? now();
 
-        $cacheKey = "sales_analytics_{$store->id}_".($startDate ? $startDate->format('Y-m-d') : 'default').'_'.($endDate ? $endDate->format('Y-m-d') : 'default');
+        try {
+            $ordersResult = $this->graphqlService->getOrdersByDateRange($store, $startDate, $endDate);
 
-        return Cache::remember($cacheKey, now()->addMinutes(30), function () use ($store, $startDate, $endDate) {
-            try {
-                $ordersResult = $this->graphqlService->getOrdersByDateRange($store, $startDate, $endDate);
+            if (isset($ordersResult['error'])) {
+                Log::warning('Orders result has error', ['error' => $ordersResult['error']]);
 
-                if (isset($ordersResult['error'])) {
-                    Log::warning('Orders result has error', ['error' => $ordersResult['error']]);
+                return $this->generateEmptySalesAnalytics($startDate, $endDate);
+            }
 
-                    return $this->generateEmptySalesAnalytics($startDate, $endDate);
-                }
-
-                if (empty($ordersResult['orders'])) {
-                    Log::info('No orders found in date range', [
-                        'store_id' => $store->id,
-                        'start_date' => $startDate->toDateString(),
-                        'end_date' => $endDate->toDateString(),
-                    ]);
-
-                    return $this->generateEmptySalesAnalytics($startDate, $endDate);
-                }
-
-                return $this->analyzeSalesData($ordersResult['orders'], $startDate, $endDate);
-
-            } catch (\Exception $e) {
-                Log::error('Exception in getSalesAnalytics', [
+            if (empty($ordersResult['orders'])) {
+                Log::info('No orders found in date range', [
                     'store_id' => $store->id,
-                    'error' => $e->getMessage(),
-                    'trace' => $e->getTraceAsString(),
+                    'start_date' => $startDate->toDateString(),
+                    'end_date' => $endDate->toDateString(),
                 ]);
 
                 return $this->generateEmptySalesAnalytics($startDate, $endDate);
             }
-        });
+
+            return $this->analyzeSalesData($ordersResult['orders'], $startDate, $endDate);
+        } catch (\Exception $e) {
+            Log::error('Exception in getSalesAnalytics', [
+                'store_id' => $store->id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            return $this->generateEmptySalesAnalytics($startDate, $endDate);
+        }
     }
 
     /**
-     * Get product analytics using GraphQL.
+     * Get product analytics using GraphQL with REST fallback for product count.
+     *
+     * This makes fresh Shopify API calls on every request (no cache),
+     * so product widgets always reflect live data.
      */
     public function getProductAnalytics(Store $store): array
     {
-        $cacheKey = "product_analytics_graphql_{$store->id}";
+        try {
+            $productsResult = $this->graphqlService->getProducts($store, [
+                'first' => 250,
+            ]);
 
-        return Cache::remember($cacheKey, now()->addHours(1), function () use ($store) {
-            try {
-                $productsResult = $this->graphqlService->getProducts($store, [
-                    'first' => 250,
-                ]);
-
-                if (isset($productsResult['error']) || empty($productsResult['products'])) {
-                    return ['error' => 'No products found or failed to fetch products'];
-                }
-
+            if (! isset($productsResult['error']) && ! empty($productsResult['products'])) {
                 return $this->analyzeProductData($productsResult['products']);
-
-            } catch (\Exception $e) {
-                Log::error('Error getting product analytics', [
-                    'store_id' => $store->id,
-                    'error' => $e->getMessage(),
-                ]);
-
-                return ['error' => 'Failed to fetch product analytics'];
             }
-        });
+
+            // Fallback: fetch products via REST
+            Log::info('Product analytics falling back to REST (no cache)', ['store_id' => $store->id]);
+            $restResponse = $this->fetchProductsViaRestUncached($store, 500);
+
+            if (! empty($restResponse)) {
+                $normalized = $this->normalizeRestProductsForAnalytics($restResponse);
+
+                return $this->analyzeProductData($normalized);
+            }
+        } catch (\Exception $e) {
+            Log::error('Error getting product analytics', [
+                'store_id' => $store->id,
+                'error' => $e->getMessage(),
+            ]);
+
+            try {
+                $restResponse = $this->fetchProductsViaRestUncached($store, 500);
+                if (! empty($restResponse)) {
+                    $normalized = $this->normalizeRestProductsForAnalytics($restResponse);
+
+                    return $this->analyzeProductData($normalized);
+                }
+            } catch (\Throwable $t) {
+                Log::warning('REST product fallback also failed', ['message' => $t->getMessage()]);
+            }
+        }
+
+        return $this->getEmptyProductAnalytics();
+    }
+
+    /**
+     * Fetch products via REST without using cache (so we get fresh Shopify data).
+     */
+    protected function fetchProductsViaRestUncached(Store $store, int $maxProducts): array
+    {
+        if (! $store->access_token) {
+            Log::warning('Store has no access_token', ['store_id' => $store->id]);
+
+            return [];
+        }
+
+        Cache::forget("all_products_{$store->id}_{$maxProducts}");
+        for ($page = 1; $page <= 5; $page++) {
+            $key = "products_{$store->id}_250_{$page}";
+            Cache::forget($key);
+        }
+
+        return $this->shopifyService->getAllProducts($store, $maxProducts);
+    }
+
+    /**
+     * Normalize REST API product shape to match what analyzeProductData expects.
+     */
+    protected function normalizeRestProductsForAnalytics(array $restProducts): array
+    {
+        $out = [];
+        foreach ($restProducts as $p) {
+            $variants = [];
+            foreach ($p['variants'] ?? [] as $v) {
+                $variants[] = [
+                    'id' => $v['id'] ?? null,
+                    'title' => $v['title'] ?? '',
+                    'sku' => $v['sku'] ?? '',
+                    'price' => (float) ($v['price'] ?? 0),
+                    'inventory_quantity' => (int) ($v['inventory_quantity'] ?? 0),
+                ];
+            }
+            $out[] = [
+                'id' => $p['id'] ?? null,
+                'title' => $p['title'] ?? '',
+                'vendor' => $p['vendor'] ?? '',
+                'product_type' => $p['product_type'] ?? '',
+                'status' => isset($p['status']) ? strtolower($p['status']) : 'active',
+                'variants' => $variants,
+            ];
+        }
+
+        return $out;
+    }
+
+    /**
+     * Return product analytics structure with zero counts (so dashboard never shows broken data).
+     */
+    protected function getEmptyProductAnalytics(): array
+    {
+        return [
+            'summary' => [
+                'total_products' => 0,
+                'total_variants' => 0,
+                'total_inventory' => 0,
+                'published_products' => 0,
+                'draft_products' => 0,
+            ],
+            'inventory_status' => ['in_stock' => 0, 'low_stock' => 0, 'out_of_stock' => 0],
+            'by_vendor' => [],
+            'by_type' => [],
+            'by_status' => [],
+            'price_ranges' => ['under_25' => 0, '25_to_100' => 0, '100_to_500' => 0, 'over_500' => 0],
+            'low_stock_items' => [],
+            'top_products' => [],
+            'charts' => [
+                'inventory_pie' => [],
+                'price_distribution' => [],
+            ],
+            'performance_metrics' => [],
+        ];
     }
 
     /**

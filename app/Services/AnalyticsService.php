@@ -30,7 +30,7 @@ class AnalyticsService
     }
 
     /**
-     * Get product performance data from real Shopify store.
+     * Get product performance data from real Shopify store (no cache).
      */
     public function getProductPerformance(
         Store $store,
@@ -38,37 +38,32 @@ class AnalyticsService
         Carbon $endDate,
         array $filters = []
     ): array {
-        $cacheKey = "product_performance_{$store->id}_{$startDate->timestamp}_{$endDate->timestamp}_".md5(json_encode($filters));
+        try {
+            $orders = $this->getOrdersInDateRange($store, $startDate, $endDate);
 
-        return Cache::remember($cacheKey, now()->addMinutes(30), function () use ($store, $startDate, $endDate, $filters) {
-            try {
-                $orders = $this->getOrdersInDateRange($store, $startDate, $endDate);
+            if (empty($orders)) {
+                Log::info('No orders found for store', ['store_id' => $store->id, 'date_range' => [$startDate, $endDate]]);
 
-                if (empty($orders)) {
-                    Log::info('No orders found for store', ['store_id' => $store->id, 'date_range' => [$startDate, $endDate]]);
-
-                    return $this->getEmptyProductPerformance();
-                }
-
-                $productPerformance = $this->dataTransformationService->transformOrdersToProductPerformance($orders, $filters);
-
-                Log::info('Product performance data generated', [
-                    'store_id' => $store->id,
-                    'orders_count' => count($orders),
-                    'total_sales' => $productPerformance['total_sales'],
-                ]);
-
-                return $productPerformance;
-
-            } catch (\Exception $e) {
-                Log::error('Error fetching product performance', [
-                    'store_id' => $store->id,
-                    'error' => $e->getMessage(),
-                ]);
-
-                return $this->mockAnalyticsService->getProductPerformance($store, $startDate, $endDate, $filters);
+                return $this->getEmptyProductPerformance();
             }
-        });
+
+            $productPerformance = $this->dataTransformationService->transformOrdersToProductPerformance($orders, $filters);
+
+            Log::info('Product performance data generated', [
+                'store_id' => $store->id,
+                'orders_count' => count($orders),
+                'total_sales' => $productPerformance['total_sales'],
+            ]);
+
+            return $productPerformance;
+        } catch (\Exception $e) {
+            Log::error('Error fetching product performance', [
+                'store_id' => $store->id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return $this->mockAnalyticsService->getProductPerformance($store, $startDate, $endDate, $filters);
+        }
     }
 
     /**
@@ -80,38 +75,33 @@ class AnalyticsService
         Carbon $endDate,
         array $filters = []
     ): array {
-        $cacheKey = "product_summary_{$store->id}_{$startDate->timestamp}_{$endDate->timestamp}_".md5(json_encode($filters));
+        try {
+            $products = $this->dataCollectionService->collectProducts($store);
+            $orders = $this->getOrdersInDateRange($store, $startDate, $endDate);
 
-        return Cache::remember($cacheKey, now()->addMinutes(30), function () use ($store, $startDate, $endDate, $filters) {
-            try {
-                $products = $this->dataCollectionService->collectProducts($store);
-                $orders = $this->getOrdersInDateRange($store, $startDate, $endDate);
+            if (empty($products)) {
+                Log::info('No products found for store', ['store_id' => $store->id]);
 
-                if (empty($products)) {
-                    Log::info('No products found for store', ['store_id' => $store->id]);
-
-                    return $this->getEmptyProductSummary();
-                }
-
-                $productSummary = $this->dataTransformationService->summarizeProductPerformance($products, $orders, $filters);
-
-                Log::info('Product summary data generated', [
-                    'store_id' => $store->id,
-                    'products_count' => count($products),
-                    'total_products' => $productSummary['total_products'],
-                ]);
-
-                return $productSummary;
-
-            } catch (\Exception $e) {
-                Log::error('Error fetching product summary', [
-                    'store_id' => $store->id,
-                    'error' => $e->getMessage(),
-                ]);
-
-                return $this->mockAnalyticsService->getProductSummary($store, $startDate, $endDate, $filters);
+                return $this->getEmptyProductSummary();
             }
-        });
+
+            $productSummary = $this->dataTransformationService->summarizeProductPerformance($products, $orders, $filters);
+
+            Log::info('Product summary data generated', [
+                'store_id' => $store->id,
+                'products_count' => count($products),
+                'total_products' => $productSummary['total_products'],
+            ]);
+
+            return $productSummary;
+        } catch (\Exception $e) {
+            Log::error('Error fetching product summary', [
+                'store_id' => $store->id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return $this->mockAnalyticsService->getProductSummary($store, $startDate, $endDate, $filters);
+        }
     }
 
     /**

@@ -8,6 +8,7 @@ use App\Services\ShopifyService;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Http;
 
 class AnalyticsController extends Controller
@@ -251,23 +252,25 @@ class AnalyticsController extends Controller
     }
 
     /**
-     * Get store from request (implement based on your auth system).
+     * Get store from request. Uses the authenticated user's store so dashboard
+     * always shows that user's Shopify data.
      */
     protected function getStore(Request $request): Store
     {
-        // Implement based on your authentication system
-        // This could be from session, JWT token, etc.
+        $user = Auth::user();
+        if (! $user) {
+            throw new \Exception('Authentication required');
+        }
 
         $storeId = $request->input('store_id') ?? session('store_id');
 
-        if (! $storeId) {
-            throw new \Exception('Store ID not provided');
-        }
-
-        $store = Store::find($storeId);
+        // Restrict to this user's active stores only
+        $store = $user->stores()->active()->when($storeId, function ($q) use ($storeId) {
+            $q->where('id', $storeId);
+        })->first();
 
         if (! $store) {
-            throw new \Exception('Store not found');
+            throw new \Exception('Store not found or not linked to your account');
         }
 
         return $store;

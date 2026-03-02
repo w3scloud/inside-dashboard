@@ -24,6 +24,7 @@ return [
     |
     */
     'scopes' => [
+        'read_shop', // Required for GET /admin/api/.../shop.json (shop details)
         'read_products',
         'read_orders',
         'read_customers',

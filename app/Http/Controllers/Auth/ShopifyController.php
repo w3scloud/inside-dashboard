@@ -264,8 +264,12 @@ class ShopifyController extends Controller
                     'has_access_token' => $store && $store->access_token ? true : false,
                 ]);
 
-                // Generate the authorization URL and redirect
-                $authUrl = $this->shopifyService->getAuthUrl($shop);
+                // Generate state (nonce) for OAuth and store in session
+                $state = Str::random(40);
+                $request->session()->put('shopify_oauth_state', $state);
+                $request->session()->put('shopify_oauth_shop', $shop);
+
+                $authUrl = $this->shopifyService->getAuthUrl($shop, $state);
 
                 return redirect()->away($authUrl);
             }
@@ -308,8 +312,12 @@ class ShopifyController extends Controller
             ]);
         }
 
-        // Generate the authorization URL
-        $authUrl = $this->shopifyService->getAuthUrl($shop);
+        // Generate state (nonce) for OAuth and store in session
+        $state = Str::random(40);
+        $request->session()->put('shopify_oauth_state', $state);
+        $request->session()->put('shopify_oauth_shop', $shop);
+
+        $authUrl = $this->shopifyService->getAuthUrl($shop, $state);
 
         return redirect()->away($authUrl);
     }
@@ -324,12 +332,20 @@ class ShopifyController extends Controller
         try {
             $shop = $request->input('shop');
             $code = $request->input('code');
+            $state = $request->input('state');
 
             if (! $shop || ! $code) {
                 return redirect()->route('login')->withErrors(['error' => 'Invalid request parameters']);
             }
 
-            // Verify the request is from Shopify
+            // Verify state (nonce) to prevent CSRF
+            $sessionState = $request->session()->pull('shopify_oauth_state');
+            if ($state === null || $sessionState === null || ! hash_equals((string) $sessionState, (string) $state)) {
+                Log::warning('OAuth callback state mismatch or missing');
+                return redirect()->route('login')->withErrors(['error' => 'Invalid state. Please try installing the app again.']);
+            }
+
+            // Verify the request is from Shopify (HMAC)
             if (! $this->verifyShopifyRequest($request)) {
                 return redirect()->route('login')->withErrors(['error' => 'Invalid request signature']);
             }
@@ -405,21 +421,21 @@ class ShopifyController extends Controller
      */
     private function findOrCreateUser(Store $store): User
     {
-        // Get shop details from Shopify
+        // Get shop details from Shopify (requires read_shop scope)
         $shopDetails = $this->shopifyService->getShopDetails($store);
 
-        if (! $shopDetails || ! isset($shopDetails['shop'])) {
-            throw new \Exception('Could not retrieve shop details');
+        if ($shopDetails && isset($shopDetails['shop'])) {
+            $shopInfo = $shopDetails['shop'];
+            $store->updateFromShopify($shopInfo);
+            $email = $shopInfo['email'] ?? "{$store->shop_domain}@example.com";
+            $name = $shopInfo['shop_owner'] ?? 'Store Owner';
+        } else {
+            Log::warning('Could not retrieve shop details; token may lack read_shop scope', [
+                'shop' => $store->shop_domain,
+            ]);
+            $email = "{$store->shop_domain}@example.com";
+            $name = 'Store Owner';
         }
-
-        $shopInfo = $shopDetails['shop'];
-
-        // Update store with shop details
-        $store->updateFromShopify($shopInfo);
-
-        // Find or create user account
-        $email = $shopInfo['email'] ?? "{$store->shop_domain}@example.com";
-        $name = $shopInfo['shop_owner'] ?? 'Store Owner';
 
         $user = User::where('email', $email)->first();
 
@@ -476,13 +492,15 @@ class ShopifyController extends Controller
     }
 
     /**
-     * Verify the request is from Shopify (OAuth callback).
+     * Verify the request is from Shopify (OAuth callback) via HMAC.
      */
     private function verifyShopifyRequest(Request $request): bool
     {
-        // For now, we'll just check if required parameters are present
-        // In production, you should verify the HMAC signature
-        return $request->has(['shop', 'code']);
+        if (! $request->has(['shop', 'code', 'hmac'])) {
+            return false;
+        }
+
+        return $this->verifyShopifyHmac($request);
     }
 
     /**

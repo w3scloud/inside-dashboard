@@ -90,16 +90,20 @@ php artisan serve
 
 ### Shopify App Setup
 
-1. Create a new app in your Shopify Partner Dashboard
-2. Configure the App URL and Allowed redirection URLs
-3. Note your API Key (Client ID) and API Secret Key (Client Secret)
-4. Update your `.env` file with these credentials:
+1. Create a new app in your [Shopify Partner Dashboard](https://partners.shopify.com).
+2. **Configure URLs (required to avoid 400 Bad Request):**
+   - In the Partner Dashboard, open your app → **Configuration** (or **App setup** → **URLs**).
+   - **App URL:** Set to your app’s public URL (e.g. `https://your-ngrok-subdomain.ngrok-free.app` or `https://your-ngrok-subdomain.ngrok-free.app/login`). Must use **HTTPS**.
+   - **Allowed redirection URL(s):** Add **exactly** this URL (same host as App URL, no trailing slash):
+     - `https://your-ngrok-subdomain.ngrok-free.app/auth/callback`
+   - The redirect URL host must match the App URL host. If you change your ngrok URL, update both.
+3. Note your **API Key (Client ID)** and **API Secret Key (Client Secret)** from the app’s **Settings** (or **Client credentials**).
+4. Update your `.env` file:
 
 ```
+APP_URL=https://your-ngrok-subdomain.ngrok-free.app
 SHOPIFY_API_KEY=your_client_id
 SHOPIFY_API_SECRET=your_client_secret
-SHOPIFY_SCOPES=read_products,write_products,read_orders,read_customers
-SHOPIFY_APP_URL=https://your-app-url.com
 ```
 
 ## Development Workflow
