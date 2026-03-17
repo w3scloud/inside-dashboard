@@ -3,6 +3,7 @@
 use App\Http\Controllers\Auth\ShopifyController;
 use App\Http\Controllers\CustomerController;
 use App\Http\Controllers\DashboardController;
+use App\Http\Controllers\DataController;
 use App\Http\Controllers\ProductController;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\ReportController;
@@ -81,6 +82,44 @@ Route::middleware(['auth', 'verified'])->group(function () {
             ->name('dashboard.widget.update');
         Route::delete('/dashboard/{id}/widget/{widgetId}', [DashboardController::class, 'removeWidget'])
             ->name('dashboard.widget.remove');
+
+        // Data table reports
+        Route::prefix('data')->name('data.')->group(function () {
+            Route::get('/abandoned-checkouts', [DataController::class, 'abandonedCheckouts'])
+                ->name('abandoned_checkouts');
+            Route::get('/abandoned-checkouts-discount-codes', [DataController::class, 'abandonedCheckoutsDiscountCodes'])
+                ->name('abandoned_checkouts_discount_codes');
+            Route::get('/abandoned-checkouts-line-item', [DataController::class, 'abandonedCheckoutsLineItem'])
+                ->name('abandoned_checkouts_line_item');
+            Route::get('/abandoned-checkouts-shipping-line', [DataController::class, 'abandonedCheckoutsShippingLine'])
+                ->name('abandoned_checkouts_shipping_line');
+            Route::get('/collections', [DataController::class, 'collections'])
+                ->name('collections');
+            Route::get('/collections-products', [DataController::class, 'collectionsProducts'])
+                ->name('collections_products');
+            Route::get('/countries', [DataController::class, 'countries'])
+                ->name('countries');
+            Route::get('/customer-address', [DataController::class, 'customerAddress'])
+                ->name('customer_address');
+            Route::get('/customer-saved-searches', [DataController::class, 'customerSavedSearches'])
+                ->name('customer_saved_searches');
+            Route::get('/customers', [DataController::class, 'customers'])
+                ->name('customers');
+            Route::get('/discount-entitled-collections', [DataController::class, 'discountEntitledCollections'])
+                ->name('discount_entitled_collections');
+            Route::get('/discount-entitled-country', [DataController::class, 'discountEntitledCountry'])
+                ->name('discount_entitled_country');
+            Route::get('/discount-entitled-products', [DataController::class, 'discountEntitledProducts'])
+                ->name('discount_entitled_products');
+            Route::get('/discount-entitled-variants', [DataController::class, 'discountEntitledVariants'])
+                ->name('discount_entitled_variants');
+            Route::get('/discount-prerequisite-collection', [DataController::class, 'discountPrerequisiteCollection'])
+                ->name('discount_prerequisite_collection');
+            Route::get('/discount-prerequisite-customers', [DataController::class, 'discountPrerequisiteCustomers'])
+                ->name('discount_prerequisite_customers');
+            Route::get('/discount-prerequisite-product', [DataController::class, 'discountPrerequisiteProduct'])
+                ->name('discount_prerequisite_product');
+        });
 
         // Report routes
         Route::get('/reports', [ReportController::class, 'index'])
