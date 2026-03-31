@@ -25,9 +25,17 @@ class DashboardController extends Controller
     }
 
     /**
-     * Display a listing of dashboards.
+     * Display a listing of dashboards / route to a specific logical dashboard.
+     *
+     * Supports simple "sections" so we can have distinct entries like:
+     * - Main Dashboard
+     * - Orders Dashboard
+     * - Customers Dashboard
+     *
+     * All of them reuse the same Vue page but are stored as separate
+     * dashboard records in the database.
      */
-    public function index()
+    public function index(Request $request)
     {
         $user = Auth::user();
         $store = $user->stores()->active()->first();
@@ -37,17 +45,47 @@ class DashboardController extends Controller
                 ->with('error', 'Please connect a Shopify store first.');
         }
 
-        // Get or create default dashboard
-        $dashboard = $store->dashboards()->where('is_default', true)->first();
+        $section = $request->query('section'); // e.g. "orders", "customers"
 
-        if (! $dashboard) {
-            $dashboard = $store->dashboards()->create([
-                'name' => 'Main Dashboard',
-                'description' => 'Your primary analytics dashboard',
-                'is_default' => true,
-                'layout' => $this->getDefaultLayout(),
-                'settings' => [],
-            ]);
+        // Map section to friendly dashboard name/description
+        $sectionConfig = $this->getSectionConfig($section);
+
+        if ($section === null) {
+            // Original behaviour: load or create the default dashboard
+            $dashboard = $store->dashboards()->where('is_default', true)->first();
+
+            if (! $dashboard) {
+                $dashboard = $store->dashboards()->create([
+                    'name' => $sectionConfig['name'],
+                    'description' => $sectionConfig['description'],
+                    'is_default' => true,
+                    'layout' => $this->getDefaultLayout(),
+                    'settings' => [],
+                ]);
+            }
+        } else {
+            // For specific sections, look up by name and create if missing
+            $dashboard = $store->dashboards()
+                ->where('name', $sectionConfig['name'])
+                ->first();
+
+            if (! $dashboard) {
+                // First time we visit this logical section: create with a
+                // section‑specific default layout (e.g. orders‑only widgets).
+                $dashboard = $store->dashboards()->create([
+                    'name' => $sectionConfig['name'],
+                    'description' => $sectionConfig['description'],
+                    'is_default' => false,
+                    'layout' => $this->getSectionDefaultLayout($section),
+                    'settings' => [],
+                ]);
+            } else {
+                // If user asked specifically for Orders / Customers, reset the
+                // layout to a clean, section‑focused configuration.
+                $dashboard->update([
+                    'layout' => $this->getSectionDefaultLayout($section),
+                ]);
+            }
         }
 
         return redirect()->route('dashboard.show', $dashboard->id);
@@ -71,6 +109,15 @@ class DashboardController extends Controller
         // Update last viewed timestamp
         $dashboard->updateLastViewed();
 
+        // Determine logical section based on dashboard name
+        $section = null;
+        $lowerName = strtolower($dashboard->name ?? '');
+        if (str_contains($lowerName, 'orders')) {
+            $section = 'orders';
+        } elseif (str_contains($lowerName, 'customers')) {
+            $section = 'customers';
+        }
+
         // Get available widget templates
         $availableWidgets = WidgetTemplate::where('is_active', true)
             ->orderBy('name')
@@ -93,6 +140,7 @@ class DashboardController extends Controller
             'dashboard' => $dashboard,
             'store' => $store,
             'availableWidgets' => $availableWidgets,
+            'section' => $section,
         ]);
     }
 
@@ -731,6 +779,51 @@ class DashboardController extends Controller
             ['i' => 'customer_analytics', 'x' => 0, 'y' => 4, 'w' => 6, 'h' => 4],
             ['i' => 'inventory_status', 'x' => 6, 'y' => 4, 'w' => 6, 'h' => 4],
         ];
+    }
+
+    /**
+     * Section metadata (names / descriptions).
+     */
+    private function getSectionConfig(?string $section): array
+    {
+        return match ($section) {
+            'orders' => [
+                'name' => 'Orders Dashboard',
+                'description' => 'Orders, revenue, fulfillment rate and related KPIs',
+            ],
+            'customers' => [
+                'name' => 'Customers Dashboard',
+                'description' => 'Customer growth, segments and lifetime value',
+            ],
+            default => [
+                'name' => 'Main Dashboard',
+                'description' => 'Your primary analytics dashboard',
+            ],
+        };
+    }
+
+    /**
+     * Section‑specific default layouts.
+     *
+     * Orders: focused on order / revenue metrics only.
+     * Customers: focused on customer analytics.
+     */
+    private function getSectionDefaultLayout(?string $section): array
+    {
+        return match ($section) {
+            'orders' => [
+                // For the Orders section we keep the grid empty so only
+                // the top KPI cards (Total Orders, Avg Order Value, etc.)
+                // are visible, matching your static design.
+            ],
+            'customers' => [
+                ['i' => 'customer_analytics', 'x' => 0, 'y' => 0, 'w' => 6, 'h' => 4],
+                ['i' => 'traffic_sources', 'x' => 6, 'y' => 0, 'w' => 6, 'h' => 4],
+                ['i' => 'marketing_roi', 'x' => 0, 'y' => 4, 'w' => 6, 'h' => 3],
+                ['i' => 'seasonal_trends', 'x' => 6, 'y' => 4, 'w' => 6, 'h' => 3],
+            ],
+            default => $this->getDefaultLayout(),
+        };
     }
 
     /**

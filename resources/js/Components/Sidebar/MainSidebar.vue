@@ -10,6 +10,20 @@ const menuItems = [
             'M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0h6',
     },
     {
+        label: 'Orders',
+        routeName: 'dashboard',
+        params: { section: 'orders' },
+        iconPath:
+            'M3 7h18M5 11h14M7 15h10M9 19h6', // simple list / orders style icon
+    },
+    {
+        label: 'Customers',
+        routeName: 'dashboard',
+        params: { section: 'customers' },
+        iconPath:
+            'M17 20h5v-2a3 3 0 00-5.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M12 12a4 4 0 100-8 4 4 0 000 8z',
+    },
+    {
         label: 'Reports',
         routeName: 'reports',
         iconPath:
@@ -137,10 +151,10 @@ onUnmounted(() => {
                     :key="item.routeName"
                     class="w-full flex justify-center"
                 >
-                    <!-- Dashboard / Reports (normal links) -->
+                    <!-- Dashboard / Orders / Customers / Reports (normal links) -->
                     <Link
                         v-if="item.routeName !== 'data'"
-                        :href="route(item.routeName)"
+                        :href="item.params ? route(item.routeName, item.params) : route(item.routeName)"
                         class="flex flex-col items-center justify-center h-14 w-14 rounded-lg text-[11px] font-medium transition-colors"
                         :class="[
                             isActive(item)
